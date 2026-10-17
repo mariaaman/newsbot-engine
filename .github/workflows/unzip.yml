@@ -1,0 +1,31 @@
+name: Auto Unzip
+
+on: [push]
+
+permissions:
+  contents: write
+
+jobs:
+  unzip:
+    runs-on: ubuntu-latest
+    if: ${{!contains(github.event.head_commit.message, 'Auto extracted') }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.WORKFLOW_PAT }}
+
+      - name: Unzip to root
+        run: |
+          shopt -s nullglob
+          for file in *.zip; do
+            unzip -o "$file" -d.
+            rm "$file"
+          done
+
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Auto extracted zip files" || exit 0
+          git push
