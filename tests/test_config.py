@@ -60,6 +60,7 @@ def test_test_helper_defaults_match_schema():
         for k, v in DEFAULTS[section].items():
             assert d[section][k] == v, (section, k)
     assert d["site"]["timezone_offset_hours"] == DEFAULTS["site"]["timezone_offset_hours"]
+    assert d["notify"]["telegram"] == DEFAULTS["notify"]["telegram"]
 
 
 def test_llm_task_with_undefined_tier_rejected():

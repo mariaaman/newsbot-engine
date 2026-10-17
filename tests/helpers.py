@@ -42,6 +42,8 @@ DEFAULTS = {
                               "en": "Give short background and an international view."}},
     "sensitive": {"keywords": {}},
     "ads": {"enabled": False, "publisher_id": "", "consent_required": False, "slots": {}},
+    "notify": {"telegram": {"enabled": True, "language": "bn", "report_idle_runs": True, "include_summary": True,
+                            "max_lines": 60}},
 }
 
 

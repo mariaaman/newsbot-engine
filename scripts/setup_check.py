@@ -4,7 +4,7 @@ never response bodies: the engine repo is public). Exit 1 if any required check 
 
 Checks: required secrets and variables are present, the brain token reaches the brain repo, the Cloudflare token is
 valid, the Pages project exists (created when missing), Workers AI embeddings answer, and the brain repo has the
-files the engine needs. Groq/Gemini model IDs are checked by `python -m newsbot health` in the same workflow."""
+files the engine needs. Optional: the Telegram bot token and chat (a test message is sent). Groq/Gemini model IDs are checked by `python -m newsbot health` in the same workflow."""
 from __future__ import annotations
 
 import json
@@ -92,6 +92,24 @@ def embedding_model(brain: Path) -> str:
         return "@cf/baai/bge-m3"
 
 
+def check_telegram(env, http) -> list[Result]:
+    """Optional. With both secrets set: the bot token must be valid and a test message must reach the chat."""
+    tok, chat = env.get("TELEGRAM_BOT_TOKEN", ""), env.get("TELEGRAM_CHAT_ID", "")
+    if not tok and not chat:
+        return [("SKIP", "telegram (optional, secrets TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID not set)")]
+    if not tok or not chat:
+        return [("FAIL", "telegram needs both secrets TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID")]
+    base = f"https://api.telegram.org/bot{tok}"                # VERIFY; never printed
+    code, data = http("POST", f"{base}/getMe", {}, None)
+    out = [("OK" if code == 200 and data.get("ok") else "FAIL", "telegram bot token is valid")]
+    if out[0][0] == "OK":
+        code, data = http("POST", f"{base}/sendMessage", {}, {
+            "chat_id": chat, "text": "\u2705 NewsBot: Telegram \u09b8\u0982\u09af\u09c1\u0995\u09cd\u09a4 \u09b9\u09af\u09bc\u09c7\u099b\u09c7 / connected."})
+        out.append(("OK" if code == 200 and data.get("ok") else "FAIL",
+                    "telegram test message reached the chat (send /start to the bot first and check TELEGRAM_CHAT_ID)"))
+    return out
+
+
 def check_brain_structure(brain: Path) -> list[Result]:
     out = [("OK" if (brain / f).is_file() else "FAIL", f"brain file {f}") for f in BRAIN_FILES]
     out += [("OK" if (brain / d).is_dir() else "FAIL", f"brain dir {d}/") for d in BRAIN_DIRS]
@@ -99,7 +117,8 @@ def check_brain_structure(brain: Path) -> list[Result]:
 
 
 def run_all(env, brain: Path, http=default_http) -> list[Result]:
-    return check_env(env) + check_brain_repo(env, http) + check_cloudflare(env, http) + check_brain_structure(brain)
+    return (check_env(env) + check_brain_repo(env, http) + check_cloudflare(env, http) + check_telegram(env, http)
+            + check_brain_structure(brain))
 
 
 def main(argv=None) -> int:

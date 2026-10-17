@@ -28,13 +28,16 @@ jobs:
       BRAIN_BRANCH: ${{ vars.BRAIN_BRANCH || 'main' }}
     steps:
       - name: Check mode
+        id: check_mode
         run: |
           case "$MODE" in auto|review|dry-run) ;; *) echo "bad mode"; exit 2 ;; esac
       - name: Checkout engine
+        id: checkout_engine
         uses: actions/checkout@v4                      # VERIFY: pin to a commit SHA before going live
         with:
           persist-credentials: false
       - name: Checkout brain (private)
+        id: checkout_brain
         uses: actions/checkout@v4                      # VERIFY: pin to a commit SHA before going live
         with:
           repository: ${{ vars.BRAIN_REPO }}
@@ -43,41 +46,50 @@ jobs:
           ref: ${{ vars.BRAIN_BRANCH || 'main' }}
           fetch-depth: 1
       - name: Set up Python
+        id: setup_python
         uses: actions/setup-python@v5                  # VERIFY: pin to a commit SHA before going live
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: pyproject.toml
       - name: Install engine
+        id: install
         run: pip install -e .
       - name: Run engine
+        id: run
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: python -m newsbot run --mode "$MODE" --brain brain
+        run: python -m newsbot run --mode "$MODE" --brain brain --report "$RUNNER_TEMP/run_report.json"
       - name: Commit to brain (state, drafts, content or review PR)
+        id: commit
         if: env.MODE != 'dry-run'
         env:
           GH_TOKEN: ${{ secrets.BRAIN_REPO_TOKEN }}
-        run: bash scripts/brain_commit.sh brain "$MODE"
+        run: |
+          export NEWSBOT_PR_URL_FILE="$RUNNER_TEMP/pr_url.txt"
+          bash scripts/brain_commit.sh brain "$MODE"
       - name: Is a deploy needed?
         id: plan
         if: env.MODE != 'dry-run'
         run: python -m newsbot deploy-needed --brain brain >> "$GITHUB_OUTPUT"
       - name: Install Hugo
+        id: hugo
         if: steps.plan.outputs.deploy == 'true'
         uses: peaceiris/actions-hugo@v3                # VERIFY: pin to a commit SHA; VERIFY it caches the binary
         with:
           hugo-version: "0.139.0"                      # VERIFY current Hugo extended version (same as ci.yml)
           extended: true
       - name: Build site
+        id: build
         if: steps.plan.outputs.deploy == 'true'
         run: |
           python scripts/gen_site_config.py --brain brain --sync-content
           hugo --minify -s site --baseURL "$(python scripts/gen_site_config.py --brain brain --print-base-url)"
       - name: Check file count (a failure blocks the deploy)
+        id: file_count
         if: steps.plan.outputs.deploy == 'true'
         run: python scripts/check_file_count.py site/public
       - name: Cache npm (wrangler)
@@ -87,15 +99,29 @@ jobs:
           path: ~/.npm
           key: npm-wrangler-${{ runner.os }}-v1
       - name: Deploy to Cloudflare Pages
+        id: deploy
         if: steps.plan.outputs.deploy == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx --yes wrangler@4 pages deploy site/public --project-name "$PAGES_PROJECT" --branch main --commit-dirty=true   # VERIFY wrangler major version and flags
       - name: Record deploy in brain state
+        id: record
         if: steps.plan.outputs.deploy == 'true'
         env:
           GH_TOKEN: ${{ secrets.BRAIN_REPO_TOKEN }}
         run: |
           python -m newsbot mark-deployed --brain brain
           bash scripts/brain_commit.sh brain state
+      - name: Notify Telegram (every step result and review requests; never fails the run)
+        if: always()
+        continue-on-error: true
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          BRAIN_REPO: ${{ vars.BRAIN_REPO }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PYTHONPATH: ${{ github.workspace }}
+          STEP_OUTCOMES: >-
+            check_mode=${{ steps.check_mode.outcome }},checkout_engine=${{ steps.checkout_engine.outcome }},checkout_brain=${{ steps.checkout_brain.outcome }},setup_python=${{ steps.setup_python.outcome }},install=${{ steps.install.outcome }},run=${{ steps.run.outcome }},commit=${{ steps.commit.outcome }},plan=${{ steps.plan.outcome }},hugo=${{ steps.hugo.outcome }},build=${{ steps.build.outcome }},file_count=${{ steps.file_count.outcome }},deploy=${{ steps.deploy.outcome }},record=${{ steps.record.outcome }}
+        run: python -m newsbot notify --brain brain --workflow hourly --report "$RUNNER_TEMP/run_report.json" --pr-url-file "$RUNNER_TEMP/pr_url.txt"

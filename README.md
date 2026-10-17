@@ -32,7 +32,8 @@ Most hours end at the gate with zero model calls: publishing nothing is a normal
   figures, names and citations. One honest limit: a planted sentence that looks like ordinary news can still become
   *one source's* claim; it can never be confirmed alone.
 - **Logs are public**, so they contain only counts, story IDs, domains, model IDs and status words. An unexpected error
-  is logged as its type and file:line only.
+  is logged as its type and file:line only. The **Telegram chat is private** and may carry titles and summaries (not
+  end-to-end encrypted: set `notify.telegram.include_summary: false` to send titles only).
 - **Not guaranteed:** the quality of real-model articles, Bengali fluency, and the live behaviour of GitHub Actions,
   Cloudflare and Hugo were not testable while building; every such assumption is marked `VERIFY` in the code and the
   first `setup` and CI runs check the most important ones. Start in review mode and read what it writes.
@@ -49,14 +50,15 @@ Create **newsbot-engine** (public) with the contents of `engine/`, and **newsbot
 ## 2. Accounts and tokens
 Cloudflare: note the Account ID and create an API token with *Cloudflare Pages: Edit* and *Workers AI: Read*. Groq: an
 API key (optional: a Gemini key). GitHub: a fine-grained token for the **brain repo only** with *Contents* and
-*Pull requests* read and write.
+*Pull requests* read and write. Telegram (optional, recommended): a bot from **@BotFather** (`/newbot`), press Start on it,
+and find your chat ID (details in FIRST_RUN).
 
 ## 3. Engine repo secrets and variables (Settings, Secrets and variables, Actions)
 Secrets: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `GROQ_API_KEY`, `BRAIN_REPO_TOKEN`, optional
-`GEMINI_API_KEY`. Variables: `BRAIN_REPO` (`owner/newsbot-brain`), `PAGES_PROJECT`, `PUBLISH_MODE` (`review`).
+`GEMINI_API_KEY`, and for Telegram `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (both or neither). Variables: `BRAIN_REPO` (`owner/newsbot-brain`), `PAGES_PROJECT`, `PUBLISH_MODE` (`review`).
 
 ## 4. Run `setup` (Actions tab, setup, Run workflow)
-Every line must say `OK` (`SKIP` for the optional Gemini key is fine). It creates the Pages project if missing and
+Every line must say `OK` (`SKIP` for the optional Gemini key or for Telegram is fine; with Telegram set it also sends a test message). It creates the Pages project if missing and
 checks the tokens, the brain repo structure and the configured model IDs. Fix a failing model ID in the brain's
 `config/llm.yaml` and run it again.
 
@@ -72,7 +74,8 @@ Run `hourly` by hand with the mode field empty (it uses `PUBLISH_MODE`, default 
 result. A story that passes every gate opens a pull request in the brain repo, `Review: new articles <date-time>`.
 
 ## 8. Approve on a phone
-In the GitHub app open the pull request and read the article under *Files changed*. **Merge** to publish (the next
+With Telegram connected, each article that needs you arrives as its own message with an **Open PR** button, and every run sends a
+quiet report of all steps (✅ ok, ❌ fail, 🛑 error, ⏭ skip). In the GitHub app open the pull request and read the article under *Files changed*. **Merge** to publish (the next
 `hourly` run deploys it); **close** to reject. Drafts that failed a gate or are sensitive wait in `pending/<lang>/`
 with their reasons; to publish one, move it to `content/<lang>/` and delete its `pending:` block.
 
@@ -103,10 +106,10 @@ Set `NEWSBOT_DEBUG=1` locally to see full tracebacks (public workflow logs delib
 
 | Path | What |
 |---|---|
-| `newsbot/` | the engine: discovery, clustering, scoring, gate, fetch, extract, verify, write, QA, publish, update flow, LLM layer |
+| `newsbot/` | the engine: discovery, clustering, scoring, gate, fetch, extract, verify, write, QA, publish, update flow, LLM layer, run report and Telegram notifier |
 | `brain-template/` | starting point for the private brain repo: config, prompts, state folders |
 | `site/` | Hugo site (layouts, i18n, trust pages, JSON-LD, ads flag) |
-| `.github/workflows/` | `hourly`, `setup`, `keepalive`, `ci` |
+| `.github/workflows/` | `hourly` (ends with the Telegram notify step), `setup`, `keepalive`, `ci` |
 | `scripts/` | brain commit/PR flow, setup checks, site config generator, file-count check |
 | `tests/`, `tools/` | tests with offline fixtures; the model evaluation tool |
 | `docs/` | `FIRST_RUN.md`, `SITE.md`, `SCALING.md` |

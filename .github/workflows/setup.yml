@@ -42,6 +42,8 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           BRAIN_REPO_TOKEN: ${{ secrets.BRAIN_REPO_TOKEN }}
           BRAIN_REPO: ${{ vars.BRAIN_REPO }}
           PAGES_PROJECT: ${{ vars.PAGES_PROJECT }}

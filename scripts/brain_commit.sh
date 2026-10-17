@@ -6,6 +6,7 @@
 #          (merging the PR on a phone = publish). The working tree is switched back to main afterwards so the
 #          Hugo build never contains unapproved articles.
 #   state  only state/ (used after a deploy to record the content fingerprint)
+# Optional: NEWSBOT_PR_URL_FILE=<path> makes review mode write the new pull request's URL there (kept out of the log).
 # Needs: git, gh (preinstalled on GitHub runners), GH_TOKEN with contents + pull requests write on the brain repo.
 set -euo pipefail
 BRAIN_DIR="${1:?brain dir}"; MODE="${2:?mode}"
@@ -44,8 +45,9 @@ if [ "$MODE" = "review" ] && [ -n "$(git status --porcelain -- content)" ]; then
   git add content
   git commit -q -m "newsbot: review ${STAMP}"
   git push -q origin "$BRANCH" 2>/dev/null
-  gh pr create --base "$BRANCH_MAIN" --head "$BRANCH" --title "Review: new articles ${STAMP}" \
-    --body "Merge to publish. Close without merging to reject." >/dev/null
+  PR_URL="$(gh pr create --base "$BRANCH_MAIN" --head "$BRANCH" --title "Review: new articles ${STAMP}" \
+    --body "Merge to publish. Close without merging to reject." | tail -n 1)"
+  if [ -n "${NEWSBOT_PR_URL_FILE:-}" ]; then printf '%s\n' "$PR_URL" > "$NEWSBOT_PR_URL_FILE"; fi   # for the Telegram step; never printed
   git checkout -q "$BRANCH_MAIN"
   echo "pr-opened"
 fi

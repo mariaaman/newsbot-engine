@@ -27,6 +27,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--mode", choices=["auto", "review", "dry-run"], default="dry-run")
     run.add_argument("--brain", default=os.environ.get("NEWSBOT_BRAIN_DIR", "brain"))
     run.add_argument("--log-level", default="INFO")
+    run.add_argument("--report", default=os.environ.get("NEWSBOT_REPORT"),
+                     help="write the step-by-step run report (JSON) here, for the notify step")
     val = sub.add_parser("validate", help="validate the brain config and exit")
     val.add_argument("--brain", default=os.environ.get("NEWSBOT_BRAIN_DIR", "brain"))
     h = sub.add_parser("health", help="verify configured LLM model IDs against the providers (needs keys)")
@@ -36,11 +38,17 @@ def build_parser() -> argparse.ArgumentParser:
     dn.add_argument("--brain", default=os.environ.get("NEWSBOT_BRAIN_DIR", "brain"))
     md = sub.add_parser("mark-deployed", help="record the content fingerprint after a successful deploy")
     md.add_argument("--brain", default=os.environ.get("NEWSBOT_BRAIN_DIR", "brain"))
+    nt = sub.add_parser("notify", help="send the run report and review requests to Telegram (never fails the run)")
+    nt.add_argument("--brain", default=os.environ.get("NEWSBOT_BRAIN_DIR", "brain"))
+    nt.add_argument("--report", default=os.environ.get("NEWSBOT_REPORT"))
+    nt.add_argument("--pr-url-file", default=os.environ.get("NEWSBOT_PR_URL_FILE"))
+    nt.add_argument("--workflow", default="hourly")
+    nt.add_argument("--log-level", default="INFO")
     return p
 
 
 def run_pipeline(cfg: "Config", mode: str, brain: Path, now=None, embedder=None, llm=None,
-                 article_fetcher=None, feed_fetcher=None) -> dict:
+                 article_fetcher=None, feed_fetcher=None, report=None) -> dict:
     """discover -> cluster -> score -> gate -> fetch -> extract -> verify (M3) -> write -> qa (M4). Later
     milestones add publish (commit/PR/deploy) and story-state updates. Dry-run reads fixtures, uses the mock LLM and never touches state."""
     from newsbot.cluster import cluster_items
@@ -79,6 +87,8 @@ def run_pipeline(cfg: "Config", mode: str, brain: Path, now=None, embedder=None,
     todo = [d for d in decisions if d.action in ("NEW", "UPDATE") and not d.queued]
     if todo and llm is None:
         llm = build_run_llm(brain, mode, state_dir)
+        if llm is None and report is not None:
+            report.add("facts", "fail", "no LLM provider is usable (check the API keys)")
     factsheets = gather_story_facts(decisions, scored, cfg, brain, mode, llm, article_fetcher, state_dir, now) if llm else {}
     articles = write_story_articles(decisions, factsheets, cfg, brain, mode, llm, embedder, now)
     if not dry and articles:
@@ -91,8 +101,12 @@ def run_pipeline(cfg: "Config", mode: str, brain: Path, now=None, embedder=None,
     n = {a: sum(d.action == a for d in decisions) for a in ("NEW", "UPDATE", "SKIP")}
     log.info("run done items=%d stories=%d new=%d update=%d skip=%d feeds_failed=%d", len(items),
              len(clusters), n["NEW"], n["UPDATE"], n["SKIP"], stats["feeds_failed"])
+    if report is not None:
+        from newsbot.report import record_run
+        record_run(report, mode=effective, stats=stats, n_stories=len(clusters), decisions=decisions,
+                   articles=articles, updates=updates)
     return {"mode": effective, "stories": len(clusters), "decisions": decisions, "factsheets": factsheets, "articles": articles,
-            "updates": updates, **n}
+            "updates": updates, "report": report, **n}
 
 
 def build_run_llm(brain: Path, mode: str, state_dir):
@@ -219,6 +233,9 @@ def _main(argv: list[str] | None = None) -> int:
     setup_logging(getattr(args, "log_level", "INFO"))
     log = logging.getLogger("newsbot.cli")
     brain = Path(args.brain)
+    if args.cmd == "notify":                                  # stdlib only: works even if the engine's dependencies are missing
+        from newsbot.notify import notify_cmd
+        return notify_cmd(brain, args.report, args.pr_url_file, args.workflow)
     if args.cmd == "run" and args.mode == "dry-run" and not brain.is_dir():
         brain = TEMPLATE  # dry-run must work offline with no brain repo checked out
     if args.cmd == "health":
@@ -231,16 +248,29 @@ def _main(argv: list[str] | None = None) -> int:
             publish.mark_deployed(brain)
             log.info("deploy recorded")
         return 0
+    from newsbot.models import utcnow
+    from newsbot.report import Report, collect
+    report = Report(getattr(args, "mode", ""), utcnow().isoformat()) if args.cmd == "run" else None
     try:
         from newsbot.config import load_config
         cfg = load_config(brain)
     except Exception as e:  # fail loudly, but never print config contents
         log.error("config invalid: %s", type(e).__name__)
+        if report is not None:
+            report.add("run", "error", f"config invalid: {type(e).__name__}")
+            report.save(args.report)
         return 2
     if args.cmd == "validate":
         log.info("config OK sources=%d", len(cfg.sources))
         return 0
-    run_pipeline(cfg, args.mode, brain)
+    try:
+        with collect(report):
+            run_pipeline(cfg, args.mode, brain, report=report)
+    except Exception as e:
+        report.add("run", "error", f"{type(e).__name__} at {_where(e)}")
+        raise
+    finally:
+        report.save(args.report)
     return 0
 
 

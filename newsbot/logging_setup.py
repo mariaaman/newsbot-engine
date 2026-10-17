@@ -23,6 +23,7 @@ def redact(text: str, secrets: list[str] | None = None) -> str:
     # generic bearer/api-key looking tokens
     text = re.sub(r"(?i)(bearer\s+)[A-Za-z0-9._\-]{8,}", r"\1***", text)
     text = re.sub(r"\b(gsk_|sk-|ghp_|github_pat_)[A-Za-z0-9_\-]{8,}", r"\1***", text)
+    text = re.sub(r"(?<!\d)\d{6,12}:[A-Za-z0-9_\-]{30,}", "***", text)            # Telegram bot token (also inside API URLs)
     return text
 
 

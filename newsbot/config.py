@@ -165,8 +165,21 @@ class SourceFeed(_Base):
     kind: Literal["rss", "google_news", "google_trends"] = "rss"
 
 
+class TelegramCfg(_Base):
+    enabled: bool = True                  # also needs the TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID secrets
+    language: Literal["bn", "en"] = "bn"
+    report_idle_runs: bool = True         # a quiet message every run, even when nothing was covered
+    include_summary: bool = True          # review messages carry the summary (it passes through Telegram's servers)
+    max_lines: int = Field(60, ge=10, le=200)
+
+
+class NotifyCfg(_Base):
+    telegram: TelegramCfg = TelegramCfg()
+
+
 class Config(_Base):
     site: SiteCfg = SiteCfg()
+    notify: NotifyCfg = NotifyCfg()
     limits: LimitsCfg = LimitsCfg()
     publish: PublishCfg = PublishCfg()
     clustering: ClusteringCfg = ClusteringCfg()

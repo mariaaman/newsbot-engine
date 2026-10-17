@@ -48,3 +48,12 @@ ads:
   publisher_id: ""        # e.g. pub-1234567890123456
   consent_required: false # true shows a consent banner and loads ads only after "accept"
   slots: {}               # optional ad-unit ids: {after_summary: "123", mid_article: "456", end_article: "789"}
+# Telegram: every step result (ok / fail / error / skip) and every review request in one chat.
+# Needs the TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID secrets in the engine repo; without them nothing is sent.
+notify:
+  telegram:
+    enabled: true
+    language: bn              # bn | en: the labels in the messages
+    report_idle_runs: true    # a quiet (silent) report every run; false = only when something happened
+    include_summary: true     # review messages carry the article summary; it passes through Telegram's servers
+    max_lines: 60             # a run report longer than this is cut with a "... more lines" note
