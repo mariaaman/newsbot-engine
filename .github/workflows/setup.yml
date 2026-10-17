@@ -1,0 +1,60 @@
+name: setup
+# Manual one-click setup check. Prints only "OK name" / "FAIL name" / "SKIP name" lines, never values.
+# Creates the Cloudflare Pages project when it is missing.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: newsbot-setup
+  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout engine
+        uses: actions/checkout@v4                      # VERIFY: pin to a commit SHA before going live
+        with:
+          persist-credentials: false
+      - name: Checkout brain (private)
+        continue-on-error: true                        # a failure here is reported by the check below
+        uses: actions/checkout@v4                      # VERIFY: pin to a commit SHA before going live
+        with:
+          repository: ${{ vars.BRAIN_REPO }}
+          token: ${{ secrets.BRAIN_REPO_TOKEN }}
+          path: brain
+          fetch-depth: 1
+      - name: Set up Python
+        uses: actions/setup-python@v5                  # VERIFY: pin to a commit SHA before going live
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install engine
+        run: pip install -e .
+      - name: Secrets, variables, brain repo, Cloudflare, Pages project, Workers AI
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          BRAIN_REPO_TOKEN: ${{ secrets.BRAIN_REPO_TOKEN }}
+          BRAIN_REPO: ${{ vars.BRAIN_REPO }}
+          PAGES_PROJECT: ${{ vars.PAGES_PROJECT }}
+          PUBLISH_MODE: ${{ vars.PUBLISH_MODE }}
+        run: python scripts/setup_check.py brain
+      - name: Brain config is valid
+        if: always()
+        run: python -m newsbot validate --brain brain
+      - name: Model IDs exist at the providers (Groq model list, Workers AI)
+        if: always()
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: python -m newsbot health --brain brain

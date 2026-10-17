@@ -1,0 +1,18 @@
+{{- /* Consent hook: only when ads are on AND ads.consent_required. Ads load only after "accept". */ -}}
+{{- $d := site.Data.site -}}
+{{- if and (partial "adson.html" .) $d.ads.consent_required }}
+<div id="consent" class="consent" role="dialog" aria-live="polite" hidden>
+<p>{{ i18n "consent_text" }}</p>
+<button type="button" id="consent-yes">{{ i18n "consent_accept" }}</button>
+<button type="button" id="consent-no">{{ i18n "consent_decline" }}</button>
+</div>
+<script>
+(function(){var K="newsbot-consent",b=document.getElementById("consent"),v=null;
+function load(){var s=document.createElement("script");s.async=true;s.crossOrigin="anonymous";s.src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-{{ $d.ads.publisher_id }}";document.head.appendChild(s);}
+function set(x){try{localStorage.setItem(K,x)}catch(e){}b.hidden=true;if(x==="yes")load();}
+try{v=localStorage.getItem(K)}catch(e){}
+if(v==="yes"){load()}else if(v!=="no"){b.hidden=false}
+document.getElementById("consent-yes").onclick=function(){set("yes")};
+document.getElementById("consent-no").onclick=function(){set("no")};})();
+</script>
+{{- end }}

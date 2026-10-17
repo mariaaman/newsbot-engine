@@ -1,0 +1,27 @@
+# LLM routing. Never hard-code model IDs in code: they live here and are verified against each
+# provider's models endpoint at startup (`python -m newsbot health`). Every ID below is # VERIFY.
+# Chains are tried in order; a provider is used only if its key exists (Groq first).
+llm:
+  tasks: {extract: small, verify: strong, write_bn: strong, write_en: strong, qa_check: small}
+  tiers:
+    small:
+      - {provider: groq, model: "openai/gpt-oss-20b"}                        # VERIFY
+      - {provider: gemini, model: "gemini-2.5-flash-lite"}                   # VERIFY, optional (GEMINI_API_KEY)
+      - {provider: workers_ai, model: "@cf/meta/llama-3.1-8b-instruct"}      # VERIFY
+    strong:
+      - {provider: groq, model: "openai/gpt-oss-120b"}                       # VERIFY
+      - {provider: gemini, model: "gemini-2.5-flash"}                        # VERIFY, optional
+      - {provider: workers_ai, model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast"}   # VERIFY
+  embedding: {provider: workers_ai, model: "@cf/baai/bge-m3"}                # VERIFY multilingual (bn) support
+  budget:
+    stop_fraction: 0.9            # stop LLM work and queue stories at 90% of a limit
+    # keys: "provider" (sum of its models) or "provider/model" (wins over provider). VERIFY all limits.
+    tokens_per_day:
+      "groq/openai/gpt-oss-120b": 180000
+      "groq/openai/gpt-oss-20b": 180000
+      gemini: 400000
+      workers_ai: 150000           # rough proxy for the free neuron allowance
+    requests_per_day:
+      groq: 900
+      gemini: 200
+  retry: {max_retries: 3, base_delay_s: 2, max_delay_s: 60}   # also honours Retry-After on 429

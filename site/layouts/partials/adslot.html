@@ -1,0 +1,8 @@
+{{- /* usage: partial "adslot.html" (dict "ctx" . "slot" "after_summary"); renders only when ads are on and the unit id is set */ -}}
+{{- $d := site.Data.site -}}
+{{- $unit := index $d.ads.slots .slot -}}
+{{- if and (partial "adson.html" .ctx) $unit }}
+<aside class="ad" aria-label="{{ i18n "ad_label" }}"><small>{{ i18n "ad_label" }}</small>
+<ins class="adsbygoogle" style="display:block" data-ad-client="ca-{{ $d.ads.publisher_id }}" data-ad-slot="{{ $unit }}" data-ad-format="auto" data-full-width-responsive="true"></ins>
+<script>(window.adsbygoogle=window.adsbygoogle||[]).push({});</script></aside>
+{{- end }}

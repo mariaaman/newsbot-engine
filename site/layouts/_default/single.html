@@ -1,0 +1,40 @@
+{{ define "main" }}
+{{- $d := site.Data.site -}}
+<article class="wrap narrow article">
+<header>
+<p class="meta">{{ with .Params.categories }}{{ $c := index . 0 }}{{ with site.GetPage (printf "/categories/%s" $c) }}<a class="cat" href="{{ .RelPermalink }}">{{ partial "catname.html" $c }}</a>{{ else }}<span class="cat">{{ partial "catname.html" $c }}</span>{{ end }} · {{ end }}{{ i18n "published" }} <time datetime="{{ .Date.Format "2006-01-02T15:04:05Z07:00" }}">{{ partial "fmtdate.html" .Date }}</time>{{ if gt (sub .Lastmod.Unix .Date.Unix) 3600 }} <span class="badge">{{ i18n "updated" }}: <time datetime="{{ .Lastmod.Format "2006-01-02T15:04:05Z07:00" }}">{{ partial "fmtdate.html" .Lastmod }}</time></span>{{ end }}</p>
+<h1>{{ .Title }}</h1>
+</header>
+<aside class="summary"><strong>{{ i18n "summary" }}</strong><p>{{ .Params.summary }}</p></aside>
+{{ partial "adslot.html" (dict "ctx" . "slot" "after_summary") }}
+<div class="body">
+{{- $c := .Content | replaceRE `\[(S\d+)\]` `<sup class="cite"><a href="#source-${1}">[${1}]</a></sup>` -}}
+{{- $parts := split $c "<h2" -}}
+{{- range $i, $p := $parts }}
+{{- if eq $i 2 }}{{ partial "timeline.html" $ }}{{ partial "adslot.html" (dict "ctx" $ "slot" "mid_article") }}{{ end }}
+{{- if gt $i 0 }}<h2{{ end }}{{ $p | safeHTML }}
+{{- end }}
+{{- if lt (len $parts) 3 }}{{ partial "timeline.html" . }}{{ end }}
+</div>
+<section class="analysis" id="analysis"><h2>{{ i18n "source_analysis" }}</h2>
+{{- with .Params.confirmed }}<h3 class="ok">{{ i18n "confirmed" }}</h3><ul>{{ range . }}<li>{{ partial "cite.html" . }}</li>{{ end }}</ul>{{ end }}
+{{- with .Params.unclear }}<h3 class="warn">{{ i18n "unclear" }}</h3><ul>{{ range . }}<li>{{ partial "cite.html" . }}</li>{{ end }}</ul>{{ end }}
+{{- with .Params.disputed }}<h3 class="bad">{{ i18n "disputed" }}</h3><ul>{{ range . }}<li>{{ partial "cite.html" . }}</li>{{ end }}</ul>{{ end }}
+</section>
+{{ partial "adslot.html" (dict "ctx" . "slot" "end_article") }}
+<section class="sources" id="sources"><h2>{{ i18n "sources" }}</h2>
+<ol>
+{{- range .Params.sources }}
+<li id="source-{{ .id }}"><strong>[{{ .id }}]</strong> <a href="{{ .url }}" rel="nofollow noopener" target="_blank">{{ .name }}</a> · {{ i18n "tier" }} {{ .tier }}{{ with .published_at }} · {{ partial "fmtdate.html" . }}{{ end }}</li>
+{{- end }}
+</ol></section>
+<section class="corrections" id="corrections"><h2>{{ i18n "corrections" }}</h2>
+{{- with .Params.corrections }}
+<ul>{{ range . }}<li>{{ with .at }}<time>{{ partial "fmtdate.html" . }}</time>: {{ end }}{{ i18n "corr_said" }} &ldquo;{{ .said }}&rdquo; &rarr; {{ i18n "corr_right" }} {{ .correct }}</li>{{ end }}</ul>
+{{- else }}
+<p class="muted">{{ i18n "no_corrections" }}{{ with site.GetPage "/pages/corrections" }} <a href="{{ .RelPermalink }}">{{ .Title }}</a>{{ end }}</p>
+{{- end }}
+</section>
+<p class="ai">{{ index $d.ai_disclosure site.Language.Lang }}{{ with site.GetPage "/pages/editorial" }} <a href="{{ .RelPermalink }}">{{ .Title }}</a>{{ end }}</p>
+</article>
+{{ end }}

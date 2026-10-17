@@ -1,0 +1,8 @@
+{{- with .Params.timeline }}
+<section class="timeline" id="timeline"><h2>{{ i18n "timeline" }}</h2>
+<ol>
+{{- range . }}
+<li>{{ with .time }}<time>{{ partial "fmtdate.html" . }}</time> {{ end }}{{ with .text }}{{ partial "cite.html" . }}{{ end }}</li>
+{{- end }}
+</ol></section>
+{{- end }}
