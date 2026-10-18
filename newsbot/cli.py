@@ -5,6 +5,7 @@ import argparse
 import logging
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from typing import TYPE_CHECKING
@@ -47,6 +48,11 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+# The sample feeds and pages are dated around this moment; a dry-run run at the real time would find every story stale
+# and skip it, which shows nothing. Real modes always use the real clock.
+DRY_RUN_NOW = datetime(2026, 10, 13, 12, 0, tzinfo=timezone.utc)
+
+
 def run_pipeline(cfg: "Config", mode: str, brain: Path, now=None, embedder=None, llm=None,
                  article_fetcher=None, feed_fetcher=None, report=None) -> dict:
     """discover -> cluster -> score -> gate -> fetch -> extract -> verify (M3) -> write -> qa (M4). Later
@@ -59,8 +65,8 @@ def run_pipeline(cfg: "Config", mode: str, brain: Path, now=None, embedder=None,
     from newsbot.state import append_decisions, load_stories, local_day_start, new_today
 
     log = logging.getLogger("newsbot.run")
-    now = now or utcnow()
     dry = mode == "dry-run"
+    now = now or (DRY_RUN_NOW if dry else utcnow())     # dry-run lives on the fixtures' clock, or every sample story looks old
     effective = mode          # the CLI/workflow mode wins; publish.mode in config is only the default for the workflow
     log.info("run start mode=%s sources=%d", effective, len(cfg.sources))
     if embedder is None and not dry:   # Workers AI multilingual embeddings when credentials exist

@@ -382,3 +382,15 @@ def test_bot_tokens_are_redacted_and_the_template_config_matches_the_defaults():
     assert cfg["notify"]["telegram"] == DEFAULTS["notify"]["telegram"]
     doc = (ROOT / "docs" / "FIRST_RUN.md").read_text(encoding="utf-8")
     assert "TELEGRAM_BOT_TOKEN" in doc and "TELEGRAM_CHAT_ID" in doc and "BotFather" in doc
+
+
+def test_dry_run_uses_the_fixture_clock_so_it_shows_the_whole_pipeline():
+    """A hand-started dry-run at the real date once skipped every sample story as too old (new=0)."""
+    from newsbot.cli import DRY_RUN_NOW
+    assert DRY_RUN_NOW == NOW
+    rep = Report("dry-run")
+    with tempfile.TemporaryDirectory() as d, collect(rep):
+        r = run_pipeline(CFG, "dry-run", Path(d), report=rep)                 # no now= : the CLI default
+    assert r["NEW"] >= 1 and r["factsheets"] and rep.reviews
+    assert {e["step"] for e in rep.events if e["status"] == "ok"} >= {"discover", "gate", "verify", "write", "qa", "publish"}
+    assert {x["status"] for x in rep.reviews} <= {"pending", "dry_run"}
