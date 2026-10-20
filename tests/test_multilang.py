@@ -202,3 +202,39 @@ def test_japanese_hindi_english_story_becomes_a_confirmed_language_neutral_fact(
     texts = " ".join(f.statement for f in fs.facts)
     assert "99" not in texts                          # the invented depth was dropped by the grounding check
     assert "地震" in fs.source_texts["S1"] or "地震" in fs.source_texts.get("S2", "")   # Shift_JIS page decoded correctly
+
+
+def test_one_refused_source_is_retried_shorter_and_a_dead_one_is_skipped():
+    from newsbot.facts import gather_facts
+    from newsbot.fetch import FetchResult
+    from newsbot.llm import ProviderError
+    seen = {"calls": []}
+
+    class Flaky(FakeLLM):
+        def complete(self, task, msgs, schema=None, max_tokens=0):
+            if task == "extract":
+                body = msgs[-1]["content"]
+                seen["calls"].append(len(body))
+                if "震度" in body and len(body) > 2000:
+                    raise ProviderError("http 413")                 # too large for the provider: retried shorter
+                if "टोक्यो" in body:
+                    raise ProviderError("http 401")                 # dead: skipped, the story goes on
+            return super().complete(task, msgs, schema, max_tokens)
+
+    big_ja = "東京都で22日朝、震度5強の地震が発生し、約5万人に避難指示が出された。" * 120
+    pages = {"https://www3.nhk.or.jp/a": big_ja.encode(), "https://www.bbc.com/news/x": EN.encode(),
+             "https://www.dw.com/hi/x": HI.encode()}
+
+    def fetcher(url):
+        if url.endswith("/robots.txt"):
+            return FetchResult(404, "text/plain", b"")
+        return FetchResult(200, "text/html; charset=utf-8", b"<html><body><p>" + pages[url] + b"</p></body></html>")
+    its = [item("https://www3.nhk.or.jp/a", "www3.nhk.or.jp", "ja", tier=1), item("https://www.bbc.com/news/x", "www.bbc.com", "en", tier=1),
+           item("https://www.dw.com/hi/x", "www.dw.com", "hi", tier=2)]
+    c = NS(limits=NS(max_sources_per_story=7), research=NS(source_chars=8000, claims_per_source=40))
+    fs, status = gather_facts(Cluster("st-ja", its), c, None, Flaky(), fetcher)
+    assert status == "ok" and any(f.status == "confirmed" for f in fs.facts)
+    assert len(seen["calls"]) >= 4 and min(seen["calls"]) < max(seen["calls"])     # the 413 source was re-sent shorter
+    all_dead = type("Dead", (FakeLLM,), {"complete": lambda self, t, m, schema=None, max_tokens=0:
+                                         (_ for _ in ()).throw(ProviderError("http 413"))})()
+    assert gather_facts(Cluster("st-ja", its), c, None, all_dead, fetcher) == (None, "llm_failed")

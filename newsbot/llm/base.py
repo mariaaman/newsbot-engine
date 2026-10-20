@@ -174,7 +174,7 @@ class LLM:
                 raise last  # type: ignore[misc]
             except ProviderError as e:
                 last = e
-                log.warning("provider failed task=%s provider=%s, trying next", task, pname)
+                log.warning("provider failed task=%s provider=%s reason=%s, trying next", task, pname, str(e)[:60])   # e.g. "http 413": a status word, never a body
                 continue
         if not tried:
             raise BudgetExhausted(f"daily LLM budget reached for task {task}")
