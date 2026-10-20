@@ -12,16 +12,22 @@ from newsbot.models import Claim, Fact, FactSheet, Source
 from newsbot.prompts import load_prompt, wrap_untrusted
 
 log = logging.getLogger("newsbot.verify")
-MAX_FACTS = 40
-_SECOND_LEVEL = {"co", "com", "org", "net", "gov", "ac", "edu"}
+MAX_FACTS = 60
+# second-level labels under a country code (bbc.co.uk, nhk.or.jp, yna.co.kr, abc.net.au, kantei.go.jp ...)
+_SECOND_LEVEL = {"co", "com", "org", "net", "gov", "ac", "edu", "or", "ne", "go", "gob", "gouv", "mil", "web", "sch", "gv", "nom"}
+# one organisation with several domains: they must count as ONE independent source
+_ORG_ALIASES = {"bbc.co.uk": "bbc.com", "bbci.co.uk": "bbc.com", "aljazeera.net": "aljazeera.com",
+                "guardian.co.uk": "theguardian.com", "dw.de": "dw.com"}
 
 
 def org_key(domain: str) -> str:
     """Registrable domain, so bbc.com/bengali and bbc.com/news count as ONE organisation."""
     parts = domain.lower().split(".")
     if len(parts) >= 3 and len(parts[-1]) == 2 and parts[-2] in _SECOND_LEVEL:
-        return ".".join(parts[-3:])
-    return ".".join(parts[-2:])
+        key = ".".join(parts[-3:])
+    else:
+        key = ".".join(parts[-2:])
+    return _ORG_ALIASES.get(key, key)
 
 
 def validate_facts(data) -> list[dict]:
@@ -60,7 +66,7 @@ def build_fact_sheet(llm, brain, story_id: str, sources: list[Source], claims: l
                "claims": [{"id": c.id, "source": c.source_id, "kind": c.kind, "text": c.text} for c in claims]}
     msgs = [{"role": "system", "content": load_prompt(brain, "verify")},
             {"role": "user", "content": wrap_untrusted("claims_data", json.dumps(payload, ensure_ascii=False))}]
-    groups = llm.complete("verify", msgs, schema=validate_facts, max_tokens=3000)
+    groups = llm.complete("verify", msgs, schema=validate_facts, max_tokens=5000)
     facts: list[Fact] = []
     used: set[str] = set()
     for g in groups:

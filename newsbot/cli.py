@@ -73,13 +73,14 @@ def run_pipeline(cfg: "Config", mode: str, brain: Path, now=None, embedder=None,
         from newsbot.llm import build_embedder, load_llm_settings
         embedder = build_embedder(load_llm_settings(brain))
     fetch = feed_fetcher or (fixture_fetcher(FIXTURES / "feeds", cfg.sources) if dry else http_fetcher())
-    items, trends, stats = discover(cfg, fetch)
+    items, trends, stats = discover(cfg, fetch, now)
     state_dir = brain / "state"
     if not dry:
         from newsbot.publish import reconcile
         reconcile(brain, now)
     known = {} if dry else load_stories(state_dir)
-    clusters = cluster_items(items, cfg, embedder, known)
+    vectors: dict = {}                               # item url -> embedding, reused by the research step
+    clusters = cluster_items(items, cfg, embedder, known, vec_out=vectors)
     scored = score_all(clusters, trends, cfg, now)
     if not dry:
         from newsbot.state import save_stories
@@ -95,7 +96,12 @@ def run_pipeline(cfg: "Config", mode: str, brain: Path, now=None, embedder=None,
         llm = build_run_llm(brain, mode, state_dir)
         if llm is None and report is not None:
             report.add("facts", "fail", "no LLM provider is usable (check the API keys)")
-    factsheets = gather_story_facts(decisions, scored, cfg, brain, mode, llm, article_fetcher, state_dir, now) if llm else {}
+    expand = None
+    if vectors and not dry:
+        from newsbot.research import make_expander
+        expand = make_expander(items, clusters, vectors, cfg)
+    factsheets = gather_story_facts(decisions, scored, cfg, brain, mode, llm, article_fetcher, state_dir, now,
+                                    expand=expand) if llm else {}
     articles = write_story_articles(decisions, factsheets, cfg, brain, mode, llm, embedder, now)
     if not dry and articles:
         from newsbot.publish import record_new_stories
@@ -139,7 +145,8 @@ def _article_fetcher(mode: str):
     return fixture_article_fetcher(FIXTURES / "articles") if mode == "dry-run" else article_http()
 
 
-def gather_story_facts(decisions, scored, cfg, brain: Path, mode: str, llm, article_fetcher, state_dir, now=None) -> dict:
+def gather_story_facts(decisions, scored, cfg, brain: Path, mode: str, llm, article_fetcher, state_dir, now=None,
+                       expand=None) -> dict:
     """Stage 5-7 for NEW/UPDATE decisions. Hours with no NEW/UPDATE make zero LLM calls and no network."""
     from newsbot.facts import gather_facts, save_fact_sheet
     log = logging.getLogger("newsbot.facts")
@@ -162,7 +169,8 @@ def gather_story_facts(decisions, scored, cfg, brain: Path, mode: str, llm, arti
             d.reason = f"{d.reason}|facts:cooldown"
             log.info("facts story=%s status=cooldown", d.story_id)
             continue
-        fs, status = gather_facts(by_id[d.story_id], cfg, brain, llm, fetcher)
+        cluster = expand(by_id[d.story_id]) if expand else by_id[d.story_id]       # research: related coverage
+        fs, status = gather_facts(cluster, cfg, brain, llm, fetcher)
         if status == "insufficient_sources" and hours > 0:
             cooldowns[d.story_id] = now + timedelta(hours=hours)
         else:

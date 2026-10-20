@@ -1,0 +1,1 @@
+Unzip at the ROOT of the newsbot-engine repo (replace all). See docs/MULTILANG.md. Then unzip the BRAIN zip in the brain repo.

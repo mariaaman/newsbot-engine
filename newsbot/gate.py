@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from newsbot.cluster import tokenize
 from newsbot.models import Story, parse_ts
 from newsbot.score import Scored
+from newsbot.verify import org_key
 from newsbot.state import updates_today
 
 STATUS_WORDS = frozenset("""arrested arrest charged cancelled canceled postponed resigns resigned
@@ -33,7 +34,14 @@ class Decision:
 
 
 def route_for(s: Scored, cfg) -> list[str]:
-    need = cfg.limits.routing_min_domains_per_language
+    """Which site languages to write. cross_language (default): a story found in ANY language (a Japanese item,
+    an Urdu one ...) is written in every site language once enough independent organisations cover it;
+    the writers work from the language-neutral fact sheet, not from a translation."""
+    lim = cfg.limits
+    if getattr(lim, "routing_mode", "same_language") == "cross_language":
+        orgs = {org_key(d) for d in s.trusted_domains}
+        return list(cfg.site.languages) if len(orgs) >= lim.routing_min_orgs else []
+    need = lim.routing_min_domains_per_language
     langs = [l for l in cfg.site.languages if len(s.trusted_by_lang.get(l, ())) >= need]
     return langs
 
@@ -57,6 +65,7 @@ def decide(scored: list[Scored], known: dict[str, Story], cfg, now: datetime,
     lim = cfg.limits
     decisions: list[Decision] = []
     new_count = new_today_count
+    new_this_run = 0
     for s in scored:                              # already sorted by score desc
         sid = s.cluster.story_id
         story = known.get(sid)
@@ -107,6 +116,10 @@ def decide(scored: list[Scored], known: dict[str, Story], cfg, now: datetime,
         if new_count >= lim.max_new_per_day:
             decisions.append(mk("SKIP", "daily_cap_reached", langs, queued=True))
             continue
+        if new_this_run >= getattr(lim, "max_new_per_run", 10**6):
+            decisions.append(mk("SKIP", "run_cap_reached", langs, queued=True))    # next hour picks it up
+            continue
         new_count += 1
+        new_this_run += 1
         decisions.append(mk("NEW", "trending_and_verified_breadth", langs))
     return decisions

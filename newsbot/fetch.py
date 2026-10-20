@@ -2,9 +2,11 @@
 All fetched text is untrusted data. Fetcher is injectable so everything runs offline on fixtures."""
 from __future__ import annotations
 
+import codecs
 import html as htmllib
 import json
 import logging
+import os
 import re
 import urllib.robotparser
 from dataclasses import dataclass
@@ -17,7 +19,7 @@ from newsbot.models import Cluster, Item, Source, iso
 from newsbot.prompts import strip_injection
 
 log = logging.getLogger("newsbot.fetch")
-USER_AGENT = "NewsBotEngine/0.1 (+https://example.invalid/about)"  # VERIFY: set a real contact URL
+USER_AGENT = f"NewsBotEngine/0.1 (+{os.environ.get('NEWSBOT_CONTACT_URL', 'https://example.invalid/about')})"  # set NEWSBOT_CONTACT_URL to your site's about page
 MAX_CHARS = 6000
 MAX_BYTES = 1_500_000
 TIMEOUT_S = 10
@@ -88,6 +90,29 @@ class RobotsCache:
         return self._cache[base].can_fetch(self._agent, url)
 
 
+_CHARSET_HDR = re.compile(r"charset\s*=\s*[\"']?([\w.:-]+)", re.I)
+_CHARSET_META = re.compile(rb"<meta[^>]+charset\s*=\s*[\"']?\s*([\w.:-]+)", re.I)
+
+
+def decode_body(body: bytes, content_type: str = "") -> str:
+    """Decode with the page's own charset (header, then <meta>): Japanese, Chinese, Russian and Turkish sites are
+    often not UTF-8. Falls back to UTF-8 with replacement characters."""
+    names = []
+    m = _CHARSET_HDR.search(content_type or "")
+    if m:
+        names.append(m.group(1))
+    m = _CHARSET_META.search(body[:4096])
+    if m:
+        names.append(m.group(1).decode("ascii", "ignore"))
+    for name in names:
+        try:
+            codecs.lookup(name)
+            return body.decode(name, "replace")
+        except (LookupError, ValueError):
+            continue
+    return body.decode("utf-8", "replace")
+
+
 _SKIP = {"script", "style", "nav", "footer", "header", "aside", "form", "noscript", "iframe", "svg"}
 
 
@@ -151,9 +176,15 @@ def pick_items(cluster: Cluster, n: int) -> list[Item]:
 
 
 def fetch_sources(cluster: Cluster, cfg, fetcher: Fetcher, min_chars: int = 150) -> list[Source]:
+    """Fetch up to max_sources_per_story pages from distinct organisations. Candidates beyond that number are kept
+    in reserve: a blocked, failed or too-short page is replaced by the next organisation."""
     robots = RobotsCache(fetcher)
     sources: list[Source] = []
-    for it in pick_items(cluster, cfg.limits.max_sources_per_story):
+    want = cfg.limits.max_sources_per_story
+    chars = getattr(getattr(cfg, "research", None), "source_chars", MAX_CHARS)
+    for it in pick_items(cluster, want * 3):
+        if len(sources) >= want:
+            break
         try:
             if not robots.allowed(it.url):
                 log.info("robots disallow domain=%s", it.domain)
@@ -165,7 +196,7 @@ def fetch_sources(cluster: Cluster, cfg, fetcher: Fetcher, min_chars: int = 150)
         if r.status != 200 or not re.search(r"html|xml|text", r.content_type, re.I):
             log.info("fetch skipped domain=%s status=%d", it.domain, r.status)
             continue
-        text, removed = strip_injection(extract_text(r.body.decode("utf-8", "replace")))
+        text, removed = strip_injection(extract_text(decode_body(r.body, r.content_type), chars))
         if removed:
             log.warning("injection-like sentences removed domain=%s count=%d", it.domain, removed)
         if len(text) < min_chars:

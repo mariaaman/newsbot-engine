@@ -8,7 +8,9 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-Lang = Literal["bn", "en"]
+Lang = Literal["bn", "en"]      # languages the SITE publishes in (output)
+# Source feeds may be in ANY language (ja, hi, ar, ...): stories are found in many languages and written up
+# in the site languages. A feed language is a short ISO code, e.g. "ja", "zh", "pt".
 
 
 class _Base(BaseModel):
@@ -46,7 +48,15 @@ class LimitsCfg(_Base):
     min_hours_between_updates: float = Field(2, ge=0)
     min_independent_sources: int = Field(3, ge=1)
     max_sources_per_story: int = Field(5, ge=1)
-    routing_min_domains_per_language: int = Field(2, ge=1)
+    routing_min_domains_per_language: int = Field(2, ge=1)   # used only when routing_mode == "same_language"
+    # cross_language: a story is written in EVERY site language once >= routing_min_orgs independent trusted
+    # organisations (in any language) cover it. same_language: the old rule (>= N trusted domains in that language).
+    routing_mode: Literal["cross_language", "same_language"] = "cross_language"
+    routing_min_orgs: int = Field(2, ge=1)
+    max_new_per_run: int = Field(1, ge=1)            # a full article costs minutes and many tokens; the rest wait for the next hour
+    max_item_age_hours: float = Field(48, gt=0)       # feed items older than this are ignored
+    max_items_per_feed: int = Field(40, ge=1)         # newest N per feed, so one big feed cannot crowd out the others
+    feed_workers: int = Field(8, ge=1, le=32)         # feeds are fetched in parallel
     max_items_per_run: int = Field(400, ge=10)
     stable_after_hours: int = 48
     closed_after_days: int = 7
@@ -72,6 +82,15 @@ class ClusteringCfg(_Base):
     embedding_threshold: float = Field(0.78, ge=0, le=1)  # cosine, VERIFY per embedding model
     story_match_threshold: float = Field(0.25, ge=0, le=1)
     min_shared_tokens: int = Field(2, ge=1)
+
+
+class ResearchCfg(_Base):
+    """How deep the engine digs for ONE selected story (more sources, more text, more claims = a fuller article)."""
+    attach_threshold: float = Field(0.70, ge=0, le=1)   # extra related items (cosine to the story centroid); 0 = off
+    max_extra_items: int = Field(8, ge=0)
+    window_hours: float = Field(48, gt=0)
+    source_chars: int = Field(6000, ge=1000, le=30000)  # chars of each source page kept for extraction
+    claims_per_source: int = Field(25, ge=5, le=60)
 
 
 class ScoringCfg(_Base):
@@ -161,7 +180,7 @@ class SourceFeed(_Base):
     name: str
     url: str
     tier: Literal[1, 2, 3]
-    lang: Lang
+    lang: str = Field(pattern=r"^[a-z]{2,3}$")   # any language; ISO 639 code
     kind: Literal["rss", "google_news", "google_trends"] = "rss"
 
 
@@ -183,6 +202,7 @@ class Config(_Base):
     limits: LimitsCfg = LimitsCfg()
     publish: PublishCfg = PublishCfg()
     clustering: ClusteringCfg = ClusteringCfg()
+    research: ResearchCfg = ResearchCfg()
     scoring: ScoringCfg = ScoringCfg()
     llm: LLMCfg = LLMCfg()
     qa: QACfg = QACfg()
@@ -215,7 +235,7 @@ def deep_merge(base: dict, over: dict) -> dict:
 
 
 def load_config(brain_dir: str | Path) -> Config:
-    """Load config/newsbot.yaml plus config/sources.<lang>.yaml from the brain dir."""
+    """Load config/newsbot.yaml plus every config/sources.<lang>.yaml (any language) from the brain dir."""
     cfg_dir = Path(brain_dir) / "config"
     if not cfg_dir.is_dir():
         raise FileNotFoundError(f"brain config dir not found: {cfg_dir}")
@@ -224,7 +244,7 @@ def load_config(brain_dir: str | Path) -> Config:
     if llm_extra:
         data["llm"] = deep_merge(data.get("llm") or {}, llm_extra.get("llm", llm_extra))
     sources: list[dict] = list(data.get("sources", []))
-    for lang in ("bn", "en"):
-        sources += _read_yaml(cfg_dir / f"sources.{lang}.yaml").get("feeds", [])
+    for path in sorted(cfg_dir.glob("sources.*.yaml")):
+        sources += _read_yaml(path).get("feeds", [])
     data["sources"] = sources
     return Config.model_validate(data)

@@ -3,9 +3,11 @@ Stdlib XML parsing, no extra dependency. Every fetch failure is tolerated and co
 from __future__ import annotations
 
 import logging
+import os
 import re
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Callable
@@ -13,7 +15,7 @@ from typing import Callable
 from newsbot.models import Item, Trend, domain_of
 
 log = logging.getLogger("newsbot.discover")
-USER_AGENT = "NewsBotEngine/0.1 (+https://example.invalid/about)"  # VERIFY: set a real contact URL
+USER_AGENT = f"NewsBotEngine/0.1 (+{os.environ.get('NEWSBOT_CONTACT_URL', 'https://example.invalid/about')})"  # set NEWSBOT_CONTACT_URL to your site's about page
 
 Fetcher = Callable[[str], bytes]
 
@@ -80,7 +82,7 @@ def parse_feed(xml: bytes, source, tiers: dict[str, int] | None = None) -> list[
                 if _local(c.tag) == "link" and c.attrib.get("href"):
                     link = c.attrib["href"]
         pub = _parse_date(_child_text(e, "pubDate") or _child_text(e, "published")
-                          or _child_text(e, "updated"))
+                          or _child_text(e, "updated") or _child_text(e, "date"))     # "date" = dc:date (RSS 1.0 / RDF feeds)
         if not title or not link or pub is None:
             continue
         domain = domain_of(link)
@@ -118,7 +120,7 @@ def parse_trends(xml: bytes) -> list[Trend]:
     return out
 
 
-def http_fetcher(timeout: float = 10.0) -> Fetcher:
+def http_fetcher(timeout: float = 8.0) -> Fetcher:
     import requests  # imported lazily so offline modules need nothing
 
     def fetch(url: str) -> bytes:
@@ -141,22 +143,40 @@ def fixture_fetcher(fixture_dir: str | Path, sources) -> Fetcher:
     return fetch
 
 
-def discover(cfg, fetch: Fetcher) -> tuple[list[Item], list[Trend], dict]:
+def discover(cfg, fetch: Fetcher, now: datetime | None = None) -> tuple[list[Item], list[Trend], dict]:
+    """Many feeds in many languages: fetched in parallel (a dead feed costs one timeout, not one per feed).
+    now (optional): items older than limits.max_item_age_hours are dropped."""
     tiers = domain_tiers(cfg.sources)
+    lim = cfg.limits
     items: list[Item] = []
     trends: list[Trend] = []
     stats = {"feeds_ok": 0, "feeds_failed": 0}
-    for src in cfg.sources:
+
+    def one(src):
         try:
             data = fetch(src.url)
             if src.kind == "google_trends":
-                trends += parse_trends(data)
-            else:
-                items += parse_feed(data, src, tiers)
-            stats["feeds_ok"] += 1
+                return src, parse_trends(data), None
+            got = sorted(parse_feed(data, src, tiers), key=lambda i: i.published, reverse=True)
+            return src, got[: getattr(lim, "max_items_per_feed", 10**6)], None
         except Exception as e:  # tolerate any single feed failure; log the type only
+            return src, None, e
+
+    with ThreadPoolExecutor(max_workers=max(1, getattr(lim, "feed_workers", 1))) as pool:
+        results = list(pool.map(one, cfg.sources))       # keeps feed order: runs stay reproducible
+    for src, got, err in results:
+        if err is not None:
             stats["feeds_failed"] += 1
-            log.warning("feed failed name=%s error=%s", src.name, type(e).__name__)
+            log.warning("feed failed name=%s error=%s", src.name, type(err).__name__)
+            continue
+        stats["feeds_ok"] += 1
+        if src.kind == "google_trends":
+            trends += got
+        else:
+            items += got
+    if now is not None:
+        oldest = now - timedelta(hours=getattr(lim, "max_item_age_hours", 10**6))
+        items = [i for i in items if i.published >= oldest]
     seen: set[str] = set()
     uniq = []
     for it in sorted(items, key=lambda i: i.published, reverse=True):

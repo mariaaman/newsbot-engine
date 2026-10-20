@@ -15,6 +15,9 @@ from newsbot.llm import estimate_tokens
 from newsbot.models import FactSheet, iso, utcnow
 from newsbot.prompts import load_prompt, wrap_untrusted
 
+LANG_NAMES = {"bn": "Bengali", "en": "English", "hi": "Hindi", "ur": "Urdu", "ar": "Arabic", "ja": "Japanese",
+              "zh": "Chinese", "ko": "Korean", "id": "Indonesian", "es": "Spanish", "fr": "French", "de": "German",
+              "ru": "Russian", "pt": "Portuguese", "tr": "Turkish"}
 LIST_FIELDS = ("confirmed", "unclear", "disputed")
 MAX_TITLE, MAX_SUMMARY = 300, 1200
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -169,8 +172,15 @@ def normalise_article(art: dict, fs: FactSheet) -> tuple[dict, int]:
 # ---------------- prompting ----------------
 
 def build_messages(fs: FactSheet, lang: str, cfg, brain, previous: dict | None = None) -> list[dict]:
-    system = load_prompt(brain, "update" if previous else f"write_{lang}")
-    system += f"\n\nLanguage of the article: {lang}. Local angle: {cfg.write.local_angle.get(lang, '')}"
+    if previous:
+        system = load_prompt(brain, "update")
+    else:
+        try:
+            system = load_prompt(brain, f"write_{lang}")
+        except FileNotFoundError:                    # a language without its own prompt uses the generic writer
+            system = load_prompt(brain, "write_default")
+    system += (f"\n\nLanguage of the article: {lang} ({LANG_NAMES.get(lang, lang)}). "
+               f"Local angle: {cfg.write.local_angle.get(lang, '')}")
     parts = [wrap_untrusted("fact_sheet", json.dumps(fact_sheet_payload(fs), ensure_ascii=False))]
     own = [s for s in fs.sources if s.get("lang") == lang]
     limit = cfg.write.own_source_chars

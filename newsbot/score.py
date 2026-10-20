@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 
 from newsbot.cluster import tokenize
 from newsbot.models import Cluster, Trend
+from newsbot.verify import org_key
 
 
 @dataclass
@@ -16,6 +17,7 @@ class Scored:
     components: dict
     blocked: bool
     trusted_domains: set = field(default_factory=set)
+    trusted_orgs: set = field(default_factory=set)         # independent organisations (bbc.com + bbc.co.uk = one)
     trusted_by_lang: dict = field(default_factory=dict)   # lang -> set of trusted domains
 
 
@@ -54,9 +56,10 @@ def score_cluster(c: Cluster, trends: list[Trend], cfg, now: datetime) -> Scored
         by_lang.setdefault(i.lang, set()).add(i.domain)
 
     window_start = now - timedelta(hours=sc.velocity_window_hours)
-    recent_domains = {i.domain for i in trusted if i.published >= window_start}
-    velocity = _clamp(len(recent_domains) / sc.velocity_norm)
-    breadth = _clamp(len(trusted_domains) / sc.breadth_norm)
+    trusted_orgs = {org_key(d) for d in trusted_domains}
+    recent_orgs = {org_key(i.domain) for i in trusted if i.published >= window_start}
+    velocity = _clamp(len(recent_orgs) / sc.velocity_norm)
+    breadth = _clamp(len(trusted_orgs) / sc.breadth_norm)
     trends_c = trends_component(c.tokens, trends, sc.trends_top_n)
     newest = max(i.published for i in c.items)
     age_h = max(0.0, (now - newest).total_seconds() / 3600)
@@ -70,7 +73,8 @@ def score_cluster(c: Cluster, trends: list[Trend], cfg, now: datetime) -> Scored
     score = (w.velocity * velocity + w.breadth * breadth + w.trends * trends_c
              + w.recency * recency + w.topic_fit * topic - w.saturation * saturation)
     return Scored(cluster=c, score=round(score, 4), components={k: round(v, 4) for k, v in comp.items()},
-                  blocked=blocked, trusted_domains=trusted_domains, trusted_by_lang=by_lang)
+                  blocked=blocked, trusted_domains=trusted_domains, trusted_by_lang=by_lang,
+                  trusted_orgs=trusted_orgs)
 
 
 def score_all(clusters: list[Cluster], trends: list[Trend], cfg, now: datetime) -> list[Scored]:

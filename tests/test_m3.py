@@ -69,7 +69,7 @@ def test_pick_items_distinct_orgs_trusted_only_best_tier_first():
     assert doms.count("bbc.com") == 1 and "news.google.com" not in doms and len(picked) == 4
     assert picked[0].tier == 1
     assert len(pick_items(barun_cluster(), 2)) == 2
-    assert org_key("news.bbc.co.uk") == "bbc.co.uk" and org_key("www.thedailystar.net") == "thedailystar.net"
+    assert org_key("news.bbc.co.uk") == "bbc.com" == org_key("feeds.bbci.co.uk") and org_key("www.thedailystar.net") == "thedailystar.net"
 
 
 def test_fetch_sources_ids_text_and_robots_and_failures():

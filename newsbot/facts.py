@@ -25,7 +25,8 @@ def gather_facts(cluster: Cluster, cfg, brain, llm, fetcher: Fetcher, version: i
     if not (llm.can_run("extract", est) and llm.can_run("verify", est)):
         return None, "queued_budget"
     try:
-        claims = [c for s in sources for c in extract_claims(llm, brain, s)]
+        per_source = getattr(getattr(cfg, "research", None), "claims_per_source", 25)
+        claims = [c for s in sources for c in extract_claims(llm, brain, s, per_source)]
         if not claims:
             return None, "insufficient_sources"
         fs = build_fact_sheet(llm, brain, cluster.story_id, sources, claims, version)

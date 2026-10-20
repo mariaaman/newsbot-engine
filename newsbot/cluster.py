@@ -12,10 +12,51 @@ from newsbot.models import Cluster, Item, Story
 
 Embedder = Callable[[list[str]], list[list[float]]]
 
-_BN_DIGITS = str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789")
+# Bengali, Arabic-Indic, Persian/Urdu and Devanagari digits -> ASCII (name kept: extract.py imports it)
+_BN_DIGITS = str.maketrans("০১২৩৪৫৬৭৮৯٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹०१२३४५६७८९", "0123456789" * 4)
 STOP = frozenset("""a an the and or of in on at to for from by with as is are was were be been
 has have had will would says said say after before over under into new this that it its their
-এবং ও এর এই করে করা জন্য থেকে হয়েছে হবে না কি যে তার তিনি তারা একটি এক সঙ্গে নিয়ে আজ""".split())
+এবং ও এর এই করে করা জন্য থেকে হয়েছে হবে না কি যে তার তিনি তারা একটি এক সঙ্গে নিয়ে আজ
+de la el los las un una y en que por con para del se su al lo como más
+le les des du et dans pour sur par au aux avec ce cette ses son sa est sont qui
+der die das den dem ein eine einer und zu mit von für auf ist sind im am bei nach aus
+o os as um uma do da dos das e em no na nos nas ao
+yang dan di ke dari untuk dengan pada ini itu akan telah oleh dalam sebagai atau juga
+ve bir bu için ile da ne ama gibi çok daha
+и в во не на что с по из за от как это для к о у но он она они же бы
+के का की है में और से को पर यह कि था थे ने भी हैं एक
+کے کا کی ہے میں اور سے کو پر یہ کہ تھا ہیں بھی ایک
+في من على إلى عن مع أن هذا هذه التي الذي كان بعد قبل ما لا و""".split())
+
+# Chinese / Japanese are written without spaces: lexical matching needs character bigrams.
+_CJK = ((0x3040, 0x30FF), (0x3400, 0x4DBF), (0x4E00, 0x9FFF), (0xF900, 0xFAFF))
+
+
+def _is_cjk(ch: str) -> bool:
+    o = ord(ch)
+    return any(lo <= o <= hi for lo, hi in _CJK)
+
+
+def _split_cjk(tok: str) -> list[str]:
+    """'東京で地震発生' -> ['東京', '京で', ...]; non-CJK parts of a mixed token are kept whole."""
+    if not any(_is_cjk(c) for c in tok):
+        return [tok]
+    out, run, other = [], [], []
+    for ch in tok + "\0":
+        if ch != "\0" and _is_cjk(ch):
+            if other:
+                out.append("".join(other))
+                other = []
+            run.append(ch)
+            continue
+        if run:
+            out += ["".join(run[i:i + 2]) for i in range(len(run) - 1)] if len(run) > 1 else []
+            run = []
+        if ch != "\0":
+            other.append(ch)
+    if other:
+        out.append("".join(other))
+    return out
 
 
 def tokenize(text: str) -> list[str]:
@@ -32,6 +73,7 @@ def tokenize(text: str) -> list[str]:
                 cur = []
     if cur:
         toks.append("".join(cur))
+    toks = [p for t in toks for p in _split_cjk(t)]
     return [t for t in toks if t not in STOP and (len(t) > 1 or t.isdigit())]
 
 
@@ -40,6 +82,11 @@ def jaccard(a: frozenset[str] | set[str], b: frozenset[str] | set[str], min_shar
     if inter < min_shared:
         return 0.0
     return inter / len(a | b)
+
+
+def _unit(v: Sequence[float]) -> list[float]:
+    n = math.sqrt(math.sumprod(v, v))
+    return [x / n for x in v] if n else list(v)
 
 
 def cosine(a: Sequence[float], b: Sequence[float]) -> float:
@@ -77,17 +124,20 @@ def top_keywords(items: list[Item], n: int = 30) -> list[str]:
 
 
 def cluster_items(items: list[Item], cfg, embedder: Embedder | None = None,
-                  known: dict[str, Story] | None = None) -> list[Cluster]:
+                  known: dict[str, Story] | None = None, vec_out: dict | None = None) -> list[Cluster]:
+    """vec_out (optional): filled with item url -> unit vector, so later stages (research) can reuse the embeddings."""
     cc = cfg.clustering
     n = len(items)
     toks = [frozenset(tokenize(i.title)) for i in items]
-    vecs = embedder([i.title for i in items]) if (embedder and n) else None
+    vecs = [_unit(v) for v in embedder([i.title for i in items])] if (embedder and n) else None
+    if vecs and vec_out is not None:
+        vec_out.update({it.url: v for it, v in zip(items, vecs)})
     uf = _UF(n)
     for i in range(n):
         for j in range(i + 1, n):
             same_lang = items[i].lang == items[j].lang
             lex = jaccard(toks[i], toks[j], cc.min_shared_tokens) if same_lang else 0.0
-            emb = cosine(vecs[i], vecs[j]) if vecs else 0.0
+            emb = math.sumprod(vecs[i], vecs[j]) if vecs else 0.0     # unit vectors: dot product = cosine
             if lex >= cc.lexical_threshold or emb >= cc.embedding_threshold:
                 uf.union(i, j)
     groups: dict[int, list[int]] = {}
