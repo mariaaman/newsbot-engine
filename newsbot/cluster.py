@@ -4,6 +4,7 @@ Lexical fallback always works offline. Cross-language linking needs an embedder
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 import unicodedata
 from typing import Callable, Sequence
@@ -11,6 +12,7 @@ from typing import Callable, Sequence
 from newsbot.models import Cluster, Item, Story
 
 Embedder = Callable[[list[str]], list[list[float]]]
+log = logging.getLogger("newsbot.cluster")
 
 # Bengali, Arabic-Indic, Persian/Urdu and Devanagari digits -> ASCII (name kept: extract.py imports it)
 _BN_DIGITS = str.maketrans("০১২৩৪৫৬৭৮৯٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹०१२३४५६७८९", "0123456789" * 4)
@@ -129,7 +131,12 @@ def cluster_items(items: list[Item], cfg, embedder: Embedder | None = None,
     cc = cfg.clustering
     n = len(items)
     toks = [frozenset(tokenize(i.title)) for i in items]
-    vecs = [_unit(v) for v in embedder([i.title for i in items])] if (embedder and n) else None
+    vecs = None
+    if embedder and n:
+        try:
+            vecs = [_unit(v) for v in embedder([i.title for i in items])]
+        except Exception as e:      # rate limit, daily allowance spent, network: fall back to same-language matching
+            log.warning("embeddings unavailable reason=%s, clustering by words only", type(e).__name__)
     if vecs and vec_out is not None:
         vec_out.update({it.url: v for it, v in zip(items, vecs)})
     uf = _UF(n)

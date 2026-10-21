@@ -3,7 +3,9 @@ Endpoints and model names: VERIFY against Cloudflare docs. Uses the same Cloudfl
 (needs Workers AI permission)."""
 from __future__ import annotations
 
-from newsbot.llm.base import ProviderError, Response
+import time
+
+from newsbot.llm.base import ProviderError, RateLimited, Response
 from newsbot.llm.http import raise_for_status, requests_transport
 
 API = "https://api.cloudflare.com/client/v4"   # VERIFY
@@ -57,7 +59,14 @@ class WorkersAIEmbedder:
         out: list[list[float]] = []
         for i in range(0, len(texts), self._batch):
             chunk = texts[i:i + self._batch]
-            res = self._p._run(self._model, {"text": chunk})
+            for attempt in range(3):                       # a 429/5xx is retried; a spent daily allowance is not curable here
+                try:
+                    res = self._p._run(self._model, {"text": chunk})
+                    break
+                except RateLimited as e:
+                    if attempt == 2:
+                        raise
+                    time.sleep(min(e.retry_after or 4 * (attempt + 1), 20))
             vecs = res.get("data")
             if not isinstance(vecs, list) or len(vecs) != len(chunk):
                 raise ProviderError("unexpected embedding response shape")

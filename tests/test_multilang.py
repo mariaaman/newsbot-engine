@@ -280,3 +280,30 @@ def test_variety_rule_lets_other_languages_overtake_when_one_country_filled_the_
     assert [s.cluster.story_id for s in diversify([bn, ja], known, c)] == ["ja1", "bn1"]
     assert [s.cluster.story_id for s in diversify([bn, ja], known, cfg(diversity_window=6, diversity_penalty=0))] == ["bn1", "ja1"]
     assert [s.cluster.story_id for s in diversify([bn, ja], {}, c)] == ["bn1", "ja1"]       # no history: unchanged
+
+
+def test_embedding_failure_does_not_kill_the_run_it_falls_back_to_words():
+    from newsbot.llm import RateLimited
+    its = [item("https://a/1", "bbc.com", "en", "Earthquake strikes Tokyo coast tonight"),
+           item("https://b/1", "dw.com", "en", "Earthquake strikes Tokyo coast tonight again")]
+
+    def broken(texts):
+        raise RateLimited(5)
+    out = {}
+    c = NS(clustering=NS(lexical_threshold=0.2, embedding_threshold=0.74, story_match_threshold=0.25, min_shared_tokens=2))
+    clusters = cluster_items(its, c, broken, {}, vec_out=out)
+    assert [len(k.items) for k in clusters] == [2] and out == {}      # same-language words still link the two headlines
+
+
+def test_embedder_retries_a_rate_limit_then_succeeds():
+    from newsbot.llm import RateLimited
+    from newsbot.llm.workers_ai import WorkersAIEmbedder
+    calls = {"n": 0}
+
+    class P:
+        def _run(self, model, payload):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RateLimited(0.01)
+            return {"data": [[1.0, 0.0] for _ in payload["text"]]}
+    assert WorkersAIEmbedder(P(), "m", batch=2)(["a", "b", "c"]) == [[1.0, 0.0]] * 3 and calls["n"] == 3
