@@ -68,8 +68,11 @@ def raw_words(s: str) -> list[str]:
     return out
 
 
+_PAREN_MARKER = re.compile(r"\(\s*S\d+(?:\s*[,;]\s*S\d+)*\s*\)")      # a writer's "(S1)" is a citation, not a figure
+
+
 def strip_markers(s: str) -> str:
-    return _MARKER.sub(" ", s)
+    return _PAREN_MARKER.sub(" ", _MARKER.sub(" ", s))
 
 
 def article_text(a: dict) -> str:

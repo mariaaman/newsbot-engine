@@ -9,6 +9,7 @@ from pathlib import Path
 from newsbot.extract import extract_claims
 from newsbot.fetch import Fetcher, fetch_sources
 from newsbot.llm import BudgetExhausted, LLMError, ProviderError
+from newsbot.llm.base import safe_reason
 from newsbot.models import Cluster, Fact, FactSheet
 from newsbot.state import _atomic_write
 from newsbot.verify import build_fact_sheet, org_key
@@ -48,7 +49,7 @@ def gather_facts(cluster: Cluster, cfg, brain, llm, fetcher: Fetcher, version: i
                 raise
             except LLMError as e:                       # one bad source must not sink the story: skip it, go on
                 failed += 1
-                log.warning("extract skipped source=%s error=%s reason=%s", s.id, type(e).__name__, str(e)[:40])
+                log.warning("extract skipped source=%s error=%s reason=%s", s.id, type(e).__name__, safe_reason(e))
         if not claims:
             return None, ("llm_failed" if failed else "insufficient_sources")
         if len({org_key(s.domain) for s in sources if any(c.source_id == s.id for c in claims)}) < MIN_SOURCES:

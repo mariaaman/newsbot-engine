@@ -65,6 +65,7 @@ class Story:
     keywords: list = field(default_factory=list)
     updates: list = field(default_factory=list)    # ISO timestamps of updates (published or parked) for the daily cap
     last_news: str = ""                            # last time a new trusted item about the story was seen (status clock)
+    lead_lang: str = ""                            # language most of its trusted sources are in (variety rule)
 
     def to_dict(self) -> dict:
         return asdict(self)

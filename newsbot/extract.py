@@ -48,7 +48,7 @@ def numbers_in(s: str) -> set[str]:
     (so '৪ লাখ' == '400,000' == '0.4 million')."""
     from decimal import Decimal, InvalidOperation
     out = set()
-    for num, mult, cjk in _NUM.findall(norm_text(s)):
+    for num, mult, cjk in _NUM.findall(re.sub(r"(?<=\d):00(?!\d)", "", norm_text(s))):
         try:
             v = Decimal(num.replace(",", "")) * (_MULT_N[mult.lower()] if mult else _CJK_MULT[cjk] if cjk else 1)
         except InvalidOperation:
@@ -90,7 +90,7 @@ def extract_claims(llm, brain, source: Source, max_claims: int = MAX_CLAIMS) -> 
     msgs = [{"role": "system", "content": load_prompt(brain, "extract")},
             {"role": "user", "content": wrap_untrusted("source_data", source.text, id=source.id,
                                                        domain=source.domain, lang=source.lang)}]
-    raw = llm.complete("extract", msgs, schema=lambda d: validate_claims(d, max_claims), max_tokens=min(3500, 600 + 60 * max_claims))
+    raw = llm.complete("extract", msgs, schema=lambda d: validate_claims(d, max_claims), max_tokens=min(6000, 1500 + 80 * max_claims))
     claims, dropped = [], 0
     for c in raw:
         if check_claim(c["kind"], c["text"], source.text):

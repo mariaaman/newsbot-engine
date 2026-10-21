@@ -57,6 +57,10 @@ class LimitsCfg(_Base):
     max_item_age_hours: float = Field(48, gt=0)       # feed items older than this are ignored
     max_items_per_feed: int = Field(40, ge=1)         # newest N per feed, so one big feed cannot crowd out the others
     feed_workers: int = Field(8, ge=1, le=32)         # feeds are fetched in parallel
+    # Variety: the newest stories already written (published or pending) count against candidates from the same lead
+    # language, so one country (e.g. Bangladesh) cannot fill every slot while Japanese or Chinese stories wait.
+    diversity_window: int = Field(8, ge=1)
+    diversity_penalty: float = Field(0.0, ge=0, le=1)   # 0 = off
     max_items_per_run: int = Field(400, ge=10)
     stable_after_hours: int = 48
     closed_after_days: int = 7
@@ -75,6 +79,7 @@ class Weights(_Base):
     recency: float = Field(0.1, ge=0)
     topic_fit: float = Field(0.15, ge=0)
     saturation: float = Field(0.2, ge=0)
+    global_reach: float = Field(0.0, ge=0)    # bonus for stories covered by outlets in several languages (0 = off)
 
 
 class ClusteringCfg(_Base):

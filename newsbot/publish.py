@@ -19,6 +19,7 @@ import yaml
 
 from newsbot.cluster import top_keywords
 from newsbot.models import Story, iso, parse_ts, utcnow
+from newsbot.score import lead_lang
 from newsbot.state import _atomic_write, load_stories, save_stories
 
 log = logging.getLogger("newsbot.publish")
@@ -62,7 +63,7 @@ def record_new_stories(state_dir, decisions, clusters_by_id: dict, factsheets: d
         stories[d.story_id] = Story(
             story_id=d.story_id, status="developing", first_seen=iso(now), last_updated=iso(now), route=route,
             fact_sheet_version=fs.version if fs else 0, versions=versions, urls=sorted(urls)[:MAX_STORY_URLS],
-            keywords=top_keywords(cl.items, 30) if cl else [])
+            keywords=top_keywords(cl.items, 30) if cl else [], lead_lang=lead_lang(cl.items) if cl else "")
         recorded.append(d.story_id)
     if recorded:
         save_stories(state_dir, stories)

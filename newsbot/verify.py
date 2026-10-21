@@ -13,6 +13,7 @@ from newsbot.prompts import load_prompt, wrap_untrusted
 
 log = logging.getLogger("newsbot.verify")
 MAX_FACTS = 60
+MIN_LEFTOVER_WORDS = 5     # an ungrouped claim shorter than this is dropped, not passed on
 # second-level labels under a country code (bbc.co.uk, nhk.or.jp, yna.co.kr, abc.net.au, kantei.go.jp ...)
 _SECOND_LEVEL = {"co", "com", "org", "net", "gov", "ac", "edu", "or", "ne", "go", "gob", "gouv", "mil", "web", "sch", "gv", "nom"}
 # one organisation with several domains: they must count as ONE independent source
@@ -82,8 +83,12 @@ def build_fact_sheet(llm, brain, story_id: str, sources: list[Source], claims: l
             stmt = group[0].text
         facts.append(Fact("", g["kind"], stmt, status, ids, sorted({c.source_id for c in group}),
                           g["note"] or auto_note))
-    for c in claims:                                   # nothing silently lost: leftovers are single-source facts
-        if c.id not in used:
+    dropped = 0
+    for c in claims:                                   # leftovers become single-source facts, but never bare fragments:
+        if c.id not in used:                           # a lone name, place or time ("রাজশাহী") says nothing to a writer
+            if len(c.text.split()) < MIN_LEFTOVER_WORDS:
+                dropped += 1
+                continue
             facts.append(Fact("", c.kind, c.text, "reported", [c.id], [c.source_id], ""))
     facts = facts[:MAX_FACTS]
     order = {"confirmed": 0, "disputed": 1, "reported": 2}
@@ -91,6 +96,6 @@ def build_fact_sheet(llm, brain, story_id: str, sources: list[Source], claims: l
     for i, f in enumerate(facts, 1):
         f.id = f"F{i}"
     cited = {s for f in facts for s in f.source_ids}
-    log.info("verify story=%s facts=%d confirmed=%d disputed=%d", story_id, len(facts),
-             sum(f.status == "confirmed" for f in facts), sum(f.status == "disputed" for f in facts))
+    log.info("verify story=%s facts=%d confirmed=%d disputed=%d fragments_dropped=%d", story_id, len(facts),
+             sum(f.status == "confirmed" for f in facts), sum(f.status == "disputed" for f in facts), dropped)
     return FactSheet(story_id, version, facts, [s.public_dict() for s in sources if s.id in cited])

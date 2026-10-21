@@ -238,3 +238,45 @@ def test_one_refused_source_is_retried_shorter_and_a_dead_one_is_skipped():
     all_dead = type("Dead", (FakeLLM,), {"complete": lambda self, t, m, schema=None, max_tokens=0:
                                          (_ for _ in ()).throw(ProviderError("http 413"))})()
     assert gather_facts(Cluster("st-ja", its), c, None, all_dead, fetcher) == (None, "llm_failed")
+
+
+def test_citation_in_parentheses_is_not_a_figure_and_clock_minutes_are_not_numbers():
+    from newsbot.qa import _numbers_text
+    assert numbers_in(_numbers_text("Dhaka Post (S1) said 9:00 a.m. versus 9:50 a.m. (S3).")) == {"9", "50"}
+    assert numbers_in("সকাল ৯টা ৫০ মিনিটে") >= {"9", "50"}
+
+
+def test_verify_drops_bare_fragments_but_keeps_real_leftover_sentences():
+    from newsbot.models import Claim, Source
+    from newsbot.verify import build_fact_sheet
+    srcs = [Source("S1", "A", 2, "https://a.com/1", "a.com", "bn", "2026-10-20T00:00:00+00:00"),
+            Source("S2", "B", 2, "https://b.com/1", "b.com", "bn", "2026-10-20T00:00:00+00:00")]
+    cl = [Claim("S1.C1", "S1", "what", "The prime minister visited Rajshahi on Tuesday"),
+          Claim("S2.C1", "S2", "what", "The prime minister visited Rajshahi on Tuesday"),
+          Claim("S1.C2", "S1", "where", "রাজশাহী"), Claim("S1.C3", "S1", "who", "তারেক রহমান"),
+          Claim("S2.C2", "S2", "what", "He opened a new bridge over the river and met local leaders")]
+
+    class LLM:
+        def complete(self, task, msgs, schema=None, max_tokens=0):
+            return schema({"facts": [{"statement": "The prime minister visited Rajshahi on Tuesday.",
+                                      "claim_ids": ["S1.C1", "S2.C1"], "kind": "what"}]})
+    fs = build_fact_sheet(LLM(), None, "st-x", srcs, cl)
+    texts = [f.statement for f in fs.facts]
+    assert len(texts) == 2 and "রাজশাহী" not in texts and "তারেক রহমান" not in texts and fs.facts[0].status == "confirmed"
+
+
+def _story(sid, lang, first_seen):
+    from newsbot.models import Story
+    return Story(story_id=sid, first_seen=first_seen, lead_lang=lang)
+
+
+def test_variety_rule_lets_other_languages_overtake_when_one_country_filled_the_recent_slots():
+    from newsbot.gate import diversify
+    bn = scored("bn1", ["prothomalo.com", "dhakapost.com"], 0.80)
+    bn.cluster.items[:] = [item(f"https://{d}/x", d, "bn") for d in ("prothomalo.com", "dhakapost.com")]
+    ja = scored("ja1", ["nhk.or.jp", "asahi.com"], 0.74)             # lower raw score
+    known = {f"k{i}": _story(f"k{i}", "bn", f"2026-10-20T0{i}:00:00+00:00") for i in range(6)}
+    c = cfg(diversity_window=6, diversity_penalty=0.2)
+    assert [s.cluster.story_id for s in diversify([bn, ja], known, c)] == ["ja1", "bn1"]
+    assert [s.cluster.story_id for s in diversify([bn, ja], known, cfg(diversity_window=6, diversity_penalty=0))] == ["bn1", "ja1"]
+    assert [s.cluster.story_id for s in diversify([bn, ja], {}, c)] == ["bn1", "ja1"]       # no history: unchanged

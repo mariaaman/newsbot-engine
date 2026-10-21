@@ -22,6 +22,16 @@ class RateLimited(LLMError):
         self.retry_after = retry_after
 
 
+def safe_reason(e: Exception) -> str:
+    """A log-safe word for why a provider call failed: status code (+ the API's error code), never a message body."""
+    m = re.match(r"http (\d{3})(?: ([a-z0-9_.-]{1,40}))?$", str(e))
+    if m:
+        return f"status_{m.group(1)}" + (f"_{m.group(2)}" if m.group(2) else "")
+    if isinstance(e, ProviderError):
+        return re.sub(r"[^a-z0-9]+", "_", str(e).lower())[:40]
+    return type(e).__name__
+
+
 class ProviderError(LLMError):
     """Non-retryable provider failure (auth, bad model, 5xx after retries)."""
 
@@ -174,7 +184,7 @@ class LLM:
                 raise last  # type: ignore[misc]
             except ProviderError as e:
                 last = e
-                log.warning("provider failed task=%s provider=%s reason=%s, trying next", task, pname, str(e)[:60])   # e.g. "http 413": a status word, never a body
+                log.warning("provider failed task=%s provider=%s reason=%s, trying next", task, pname, safe_reason(e))
                 continue
         if not tried:
             raise BudgetExhausted(f"daily LLM budget reached for task {task}")

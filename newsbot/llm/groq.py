@@ -21,7 +21,13 @@ class GroqProvider:
         if json_mode:
             body["response_format"] = {"type": "json_object"}
         status, headers, data = self._t("POST", f"{self._base}/chat/completions", headers=self._h(), json=body)
-        raise_for_status(status, headers)
+        try:
+            raise_for_status(status, headers)
+        except ProviderError as e:
+            err = data.get("error") if isinstance(data, dict) else None
+            code = "".join(ch for ch in str((err or {}).get("code") or (err or {}).get("type") or "").lower()
+                           if ch.isalnum() or ch in "_.-")[:40] if isinstance(err, dict) else ""
+            raise ProviderError(f"{e} {code}".strip()) from None
         try:
             u = data.get("usage", {})
             return Response(data["choices"][0]["message"]["content"] or "", u.get("prompt_tokens", 0),

@@ -21,6 +21,15 @@ class Scored:
     trusted_by_lang: dict = field(default_factory=dict)   # lang -> set of trusted domains
 
 
+def lead_lang(items) -> str:
+    """Language in which most of a story's trusted items are written (ties: alphabetical). '' if none."""
+    counts: dict[str, int] = {}
+    for i in items:
+        if i.tier <= 2:
+            counts[i.lang] = counts.get(i.lang, 0) + 1
+    return min(counts, key=lambda k: (-counts[k], k)) if counts else ""
+
+
 def _clamp(x: float) -> float:
     return max(0.0, min(1.0, x))
 
@@ -68,10 +77,12 @@ def score_cluster(c: Cluster, trends: list[Trend], cfg, now: datetime) -> Scored
     all_domains = {i.domain for i in c.items}
     saturation = _clamp((len(all_domains) - sc.saturation_start) / sc.saturation_span)
 
+    reach = _clamp((len({i.lang for i in trusted}) - 1) / 3)       # 1 language = 0, 4+ languages = 1
     comp = {"velocity": velocity, "breadth": breadth, "trends": trends_c, "recency": recency,
-            "topic_fit": topic, "saturation": saturation}
+            "topic_fit": topic, "saturation": saturation, "reach": reach}
     score = (w.velocity * velocity + w.breadth * breadth + w.trends * trends_c
-             + w.recency * recency + w.topic_fit * topic - w.saturation * saturation)
+             + w.recency * recency + w.topic_fit * topic - w.saturation * saturation
+             + getattr(w, "global_reach", 0.0) * reach)
     return Scored(cluster=c, score=round(score, 4), components={k: round(v, 4) for k, v in comp.items()},
                   blocked=blocked, trusted_domains=trusted_domains, trusted_by_lang=by_lang,
                   trusted_orgs=trusted_orgs)

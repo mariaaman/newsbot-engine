@@ -324,6 +324,7 @@ def test_failed_and_unclean_drafts_are_never_written_to_content():
 ALLOWED_KEYS = {"articles", "claims", "closed", "confirmed", "count", "disputed", "domain", "dropped", "facts", "failures",
                 "feeds_failed", "items", "lang", "mode", "model", "new", "news", "provider", "published", "rejected",
                 "reopened", "review", "sanitized", "skip", "source", "sources", "stable", "status", "stories", "story",
+                "reason", "fragments_dropped", "attached", "orgs_now",
                 "task", "tokens", "update", "updates_applied", "updates_rejected"}
 SECRETS = {"GROQ_API_KEY": "gsk_TESTSECRETvalue0123456789", "CLOUDFLARE_API_TOKEN": "cf-TESTSECRET-token-0123456789",
            "BRAIN_REPO_TOKEN": "github_pat_TESTSECRET0123456789", "GEMINI_API_KEY": "AIzaTESTSECRET0123456789"}

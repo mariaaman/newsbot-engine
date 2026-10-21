@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 
 from newsbot.cluster import tokenize
 from newsbot.models import Story, parse_ts
-from newsbot.score import Scored
+from newsbot.score import Scored, lead_lang
 from newsbot.verify import org_key
 from newsbot.state import updates_today
 
@@ -60,13 +60,30 @@ def has_new_confirmed_signal(s: Scored, story: Story) -> bool:
     return any(STATUS_WORDS & set(tokenize(i.title)) for i in new)
 
 
+def diversify(scored: list[Scored], known: dict[str, Story], cfg) -> list[Scored]:
+    """Order candidates by score minus a penalty for the lead language of the newest stories already written."""
+    lim = cfg.limits
+    pen = getattr(lim, "diversity_penalty", 0.0)
+    if pen <= 0 or not known:
+        return scored
+    recent = sorted((st for st in known.values() if getattr(st, "lead_lang", "")), key=lambda st: st.first_seen,
+                    reverse=True)[: lim.diversity_window]
+    if not recent:
+        return scored
+    share = {}
+    for st in recent:
+        share[st.lead_lang] = share.get(st.lead_lang, 0) + 1 / len(recent)
+    return sorted(scored, key=lambda s: (-(s.score - pen * share.get(lead_lang(s.cluster.items), 0.0)),
+                                         s.cluster.story_id))
+
+
 def decide(scored: list[Scored], known: dict[str, Story], cfg, now: datetime,
            day_start: datetime, new_today_count: int) -> list[Decision]:
     lim = cfg.limits
     decisions: list[Decision] = []
     new_count = new_today_count
     new_this_run = 0
-    for s in scored:                              # already sorted by score desc
+    for s in diversify(scored, known, cfg):       # score order, adjusted for variety when diversity_penalty > 0
         sid = s.cluster.story_id
         story = known.get(sid)
 
