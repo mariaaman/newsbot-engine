@@ -27,6 +27,11 @@ class GroqProvider:
             err = data.get("error") if isinstance(data, dict) else None
             code = "".join(ch for ch in str((err or {}).get("code") or (err or {}).get("type") or "").lower()
                            if ch.isalnum() or ch in "_.-")[:40] if isinstance(err, dict) else ""
+            if json_mode and code == "json_validate_failed":
+                # the model could not produce valid JSON in JSON mode (seen with gpt-oss-20b on long non-Latin text):
+                # ask once more without JSON mode; the engine's own parser then reads the JSON from the reply
+                again = list(messages) + [{"role": "user", "content": "Reply with ONLY the JSON object described above, no other text."}]
+                return self.chat(model, again, json_mode=False, max_tokens=max_tokens, task=task)
             raise ProviderError(f"{e} {code}".strip()) from None
         try:
             u = data.get("usage", {})

@@ -307,3 +307,16 @@ def test_embedder_retries_a_rate_limit_then_succeeds():
                 raise RateLimited(0.01)
             return {"data": [[1.0, 0.0] for _ in payload["text"]]}
     assert WorkersAIEmbedder(P(), "m", batch=2)(["a", "b", "c"]) == [[1.0, 0.0]] * 3 and calls["n"] == 3
+
+
+def test_groq_json_validate_failure_is_retried_once_without_json_mode():
+    from newsbot.llm.groq import GroqProvider
+    seen = []
+
+    def transport(method, url, headers=None, json=None):
+        seen.append("response_format" in json)
+        if "response_format" in json:
+            return 400, {}, {"error": {"code": "json_validate_failed", "message": "Failed to generate JSON"}}
+        return 200, {}, {"choices": [{"message": {"content": '{"claims": []}'}}], "usage": {"prompt_tokens": 5, "completion_tokens": 3}}
+    r = GroqProvider("k", transport).chat("m", [{"role": "user", "content": "x"}], json_mode=True, max_tokens=100)
+    assert seen == [True, False] and r.text == '{"claims": []}'
