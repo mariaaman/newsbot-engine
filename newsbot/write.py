@@ -179,8 +179,12 @@ def build_messages(fs: FactSheet, lang: str, cfg, brain, previous: dict | None =
             system = load_prompt(brain, f"write_{lang}")
         except FileNotFoundError:                    # a language without its own prompt uses the generic writer
             system = load_prompt(brain, "write_default")
+    cats = getattr(getattr(cfg, "site", None), "categories", None) or []
     system += (f"\n\nLanguage of the article: {lang} ({LANG_NAMES.get(lang, lang)}). "
                f"Local angle: {cfg.write.local_angle.get(lang, '')}")
+    if cats:                                         # the QA gate rejects any other value, so the writer must be told
+        system += (f"\nALLOWED CATEGORIES (the \"category\" field must be exactly one of these ids, lowercase, "
+                   f"nothing else): {', '.join(cats)}")
     parts = [wrap_untrusted("fact_sheet", json.dumps(fact_sheet_payload(fs), ensure_ascii=False))]
     own = [s for s in fs.sources if s.get("lang") == lang]
     limit = cfg.write.own_source_chars

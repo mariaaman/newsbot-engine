@@ -17,6 +17,7 @@ __all__ = ["LLM", "Budget", "BudgetExhausted", "LLMError", "ProviderError", "Rat
 def build_providers(env=os.environ) -> dict:
     from newsbot.llm.gemini import GeminiProvider
     from newsbot.llm.groq import GroqProvider
+    from newsbot.llm.openrouter import OpenRouterProvider
     from newsbot.llm.workers_ai import WorkersAIProvider
     out: dict = {}
     if env.get("GROQ_API_KEY"):
@@ -25,6 +26,8 @@ def build_providers(env=os.environ) -> dict:
         out["workers_ai"] = WorkersAIProvider(env["CLOUDFLARE_ACCOUNT_ID"], env["CLOUDFLARE_API_TOKEN"])
     if env.get("GEMINI_API_KEY"):
         out["gemini"] = GeminiProvider(env["GEMINI_API_KEY"])
+    if env.get("OPENROUTER_API_KEY"):
+        out["openrouter"] = OpenRouterProvider(env["OPENROUTER_API_KEY"])
     return out
 
 

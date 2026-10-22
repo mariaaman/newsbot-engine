@@ -120,7 +120,7 @@ class LLMBudget(_Base):
 
 
 class TierEntry(_Base):
-    provider: Literal["groq", "workers_ai", "gemini", "mock"]
+    provider: Literal["groq", "workers_ai", "gemini", "openrouter", "mock"]
     model: str
 
 

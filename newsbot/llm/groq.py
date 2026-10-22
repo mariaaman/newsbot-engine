@@ -9,6 +9,7 @@ BASE_URL = "https://api.groq.com/openai/v1"   # VERIFY
 
 class GroqProvider:
     name = "groq"
+    json_retry_codes = frozenset({"json_validate_failed"})   # error codes after which JSON mode is dropped for one retry
 
     def __init__(self, api_key: str, transport=requests_transport, base_url: str = BASE_URL):
         self._key, self._t, self._base = api_key, transport, base_url.rstrip("/")
@@ -27,7 +28,7 @@ class GroqProvider:
             err = data.get("error") if isinstance(data, dict) else None
             code = "".join(ch for ch in str((err or {}).get("code") or (err or {}).get("type") or "").lower()
                            if ch.isalnum() or ch in "_.-")[:40] if isinstance(err, dict) else ""
-            if json_mode and code == "json_validate_failed":
+            if json_mode and code in self.json_retry_codes:
                 # the model could not produce valid JSON in JSON mode (seen with gpt-oss-20b on long non-Latin text):
                 # ask once more without JSON mode; the engine's own parser then reads the JSON from the reply
                 again = list(messages) + [{"role": "user", "content": "Reply with ONLY the JSON object described above, no other text."}]
@@ -38,7 +39,7 @@ class GroqProvider:
             return Response(data["choices"][0]["message"]["content"] or "", u.get("prompt_tokens", 0),
                             u.get("completion_tokens", 0), model, self.name)
         except (KeyError, IndexError, TypeError, AttributeError):
-            raise ProviderError("unexpected groq response shape") from None
+            raise ProviderError(f"unexpected {self.name} response shape") from None
 
     def list_models(self) -> list[str]:
         status, headers, data = self._t("GET", f"{self._base}/models", headers=self._h())

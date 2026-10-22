@@ -45,7 +45,7 @@ def test_every_workflow_declares_permissions_concurrency_and_timeout():
         assert isinstance(wf.get("permissions"), dict), f.name
         assert wf["concurrency"]["group"], f.name
         for name, job in wf["jobs"].items():
-            assert job["timeout-minutes"] == 15, (f.name, name)
+            assert job["timeout-minutes"] == (30 if f.name == "hourly.yml" else 15), (f.name, name)   # hourly: rate-limit waits
     assert load(WF_DIR / "hourly.yml")["permissions"] == {"contents": "read"}
     assert load(WF_DIR / "setup.yml")["permissions"] == {"contents": "read"}
     assert load(WF_DIR / "hourly.yml")["concurrency"]["cancel-in-progress"] is False   # runs never overlap or get cut off

@@ -320,3 +320,62 @@ def test_groq_json_validate_failure_is_retried_once_without_json_mode():
         return 200, {}, {"choices": [{"message": {"content": '{"claims": []}'}}], "usage": {"prompt_tokens": 5, "completion_tokens": 3}}
     r = GroqProvider("k", transport).chat("m", [{"role": "user", "content": "x"}], json_mode=True, max_tokens=100)
     assert seen == [True, False] and r.text == '{"claims": []}'
+
+
+def test_writer_is_told_the_allowed_categories():
+    from newsbot.models import FactSheet
+    from newsbot.write import build_messages
+    from newsbot.prompts import load_prompt  # noqa: F401  (the template prompts exist)
+    from newsbot.cli import TEMPLATE
+    fs = FactSheet("st-x", 1, [], [])
+    c = NS(write=NS(local_angle={"en": "x"}, own_source_chars=0), site=NS(categories=["world", "bangladesh", "sports"]))
+    msgs = build_messages(fs, "en", c, TEMPLATE)
+    assert "ALLOWED CATEGORIES" in msgs[0]["content"] and "world, bangladesh, sports" in msgs[0]["content"]
+
+
+def test_openrouter_retries_json_mode_400_without_json_mode_and_reports_its_name():
+    from newsbot.llm.openrouter import OpenRouterProvider
+    seen = []
+
+    def transport(method, url, headers=None, json=None):
+        seen.append((url, "response_format" in json, headers.get("X-Title")))
+        if "response_format" in json:
+            return 400, {}, {"error": {"code": 400, "message": "response_format unsupported"}}
+        return 200, {}, {"choices": [{"message": {"content": '{"ok": true}'}}], "usage": {"prompt_tokens": 4, "completion_tokens": 2}}
+    r = OpenRouterProvider("k", transport).chat("openai/gpt-oss-120b:free", [{"role": "user", "content": "x"}], json_mode=True)
+    assert r.provider == "openrouter" and r.text == '{"ok": true}' and r.total_tokens == 6
+    assert seen[0][0] == "https://openrouter.ai/api/v1/chat/completions" and [s[1] for s in seen] == [True, False]
+    assert seen[0][2] == "newsbot"
+
+
+def test_livetest_reports_ok_failed_and_skipped_providers_without_leaking_answers():
+    import logging
+    from newsbot.llm import ProviderError
+    from newsbot.llm.base import Response
+    from newsbot.llm.livetest import run_livetest
+
+    class Good:
+        def chat(self, model, msgs, json_mode=False, max_tokens=0, task=""):
+            txt = '{"ok": true, "n": 7}' if len(msgs) == 1 else '{"claims": [{"kind": "what", "text": "SECRET-ANSWER"}]}'
+            return Response(txt, 10, 5, model, "good")
+
+    class Dead:
+        def chat(self, *a, **k):
+            raise ProviderError("http 404")
+
+        def list_models(self):
+            return ["gemini-3.5-flash", "gemini-pro", "x"]
+    records = []
+
+    class H(logging.Handler):
+        def emit(self, r):
+            records.append(r.getMessage())
+    lg = logging.getLogger("newsbot.llmtest")
+    lg.addHandler(H())
+    lg.setLevel(logging.INFO)
+    s = {"tiers": {"strong": [{"provider": "a", "model": "m1"}, {"provider": "gemini", "model": "old"},
+                              {"provider": "nokey", "model": "m3"}]}}
+    out = run_livetest(s, {"a": Good(), "gemini": Dead()})
+    assert out == {"ok": [("a", "m1")], "failed": [("gemini", "old")], "skipped": [("nokey", "m3")]}
+    text = "\n".join(records)
+    assert "reason=status_404" in text and "gemini-3.5-flash" in text and "SECRET-ANSWER" not in text

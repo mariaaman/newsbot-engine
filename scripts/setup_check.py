@@ -15,7 +15,7 @@ from pathlib import Path
 import requests
 
 REQUIRED_SECRETS = ("CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "GROQ_API_KEY", "BRAIN_REPO_TOKEN")
-OPTIONAL_SECRETS = ("GEMINI_API_KEY",)
+OPTIONAL_SECRETS = ("GEMINI_API_KEY", "OPENROUTER_API_KEY")
 REQUIRED_VARS = ("PAGES_PROJECT", "BRAIN_REPO")
 BRAIN_FILES = ("config/newsbot.yaml", "config/llm.yaml", "config/sources.bn.yaml", "config/sources.en.yaml",
                "prompts/extract.md", "prompts/verify.md", "prompts/write_bn.md", "prompts/write_en.md",

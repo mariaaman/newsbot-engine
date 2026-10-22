@@ -35,6 +35,9 @@ def build_parser() -> argparse.ArgumentParser:
     h = sub.add_parser("health", help="verify configured LLM model IDs against the providers (needs keys)")
     h.add_argument("--brain", default=os.environ.get("NEWSBOT_BRAIN_DIR", "brain"))
     h.add_argument("--log-level", default="INFO")
+    lt = sub.add_parser("llmtest", help="live test: which configured LLM providers really answer (needs keys)")
+    lt.add_argument("--brain", default=os.environ.get("NEWSBOT_BRAIN_DIR", "brain"))
+    lt.add_argument("--log-level", default="INFO")
     dn = sub.add_parser("deploy-needed", help="print deploy=true|false (site content/config changed since last deploy)")
     dn.add_argument("--brain", default=os.environ.get("NEWSBOT_BRAIN_DIR", "brain"))
     md = sub.add_parser("mark-deployed", help="record the content fingerprint after a successful deploy")
@@ -207,6 +210,23 @@ def write_story_articles(decisions, factsheets, cfg, brain: Path, mode: str, llm
     return out
 
 
+def llmtest_cmd(brain: Path) -> int:
+    """Exit 0 if at least one provider/model passes both probes, else 3. Never prints keys, prompts or answers."""
+    from newsbot.llm import build_providers, load_llm_settings
+    from newsbot.llm.livetest import run_livetest
+    provs = build_providers()
+    res = run_livetest(load_llm_settings(brain), provs)
+    emb = load_llm_settings(brain).get("embedding")
+    if emb and emb.get("provider") == "workers_ai" and "workers_ai" in provs:
+        from newsbot.llm import build_embedder
+        try:
+            ok = len(build_embedder(load_llm_settings(brain), provs)(["test"])) == 1
+            logging.getLogger("newsbot.llmtest").info("llmtest embedding model=%s status=%s", emb["model"], "OK" if ok else "BAD_ANSWER")
+        except Exception as e:                               # the daily allowance spent shows up here
+            logging.getLogger("newsbot.llmtest").info("llmtest embedding model=%s status=FAIL reason=%s", emb["model"], type(e).__name__)
+    return 0 if res["ok"] else 3
+
+
 def health_cmd(brain: Path) -> int:
     """Fail loudly (exit 3) if any configured model ID is missing at its provider. Prints IDs and status only."""
     from newsbot.llm import HealthCheckError, build_providers, check_models, load_llm_settings
@@ -254,6 +274,8 @@ def _main(argv: list[str] | None = None) -> int:
         brain = TEMPLATE  # dry-run must work offline with no brain repo checked out
     if args.cmd == "health":
         return health_cmd(brain)
+    if args.cmd == "llmtest":
+        return llmtest_cmd(brain)
     if args.cmd in ("deploy-needed", "mark-deployed"):      # no config or pydantic needed
         from newsbot import publish
         if args.cmd == "deploy-needed":
