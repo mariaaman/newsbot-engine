@@ -1,27 +1,31 @@
 name: Auto Unzip
-
-on: [push]
-
+# Helper for phone-only work: push a .zip to the repo ROOT and this unpacks it over the repo, deletes the zip and commits.
+# It runs only when a push touches a root-level .zip, never on ordinary pushes. Needs the WORKFLOW_PAT secret (a token
+# allowed to change workflow files). Remove this file once you no longer upload zips.
+on:
+  push:
+    paths: ["*.zip"]
 permissions:
   contents: write
-
+concurrency:
+  group: newsbot-unzip
+  cancel-in-progress: false
 jobs:
   unzip:
-    runs-on: ubuntu-latest
-    if: ${{!contains(github.event.head_commit.message, 'Auto extracted') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    if: ${{ !contains(github.event.head_commit.message, 'Auto extracted') }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4                      # VERIFY: pin to a commit SHA before going live
         with:
           token: ${{ secrets.WORKFLOW_PAT }}
-
       - name: Unzip to root
         run: |
           shopt -s nullglob
           for file in *.zip; do
-            unzip -o "$file" -d.
+            unzip -o -q "$file" -x ".git/*" -d .
             rm "$file"
           done
-
       - name: Commit
         run: |
           git config user.name "github-actions[bot]"

@@ -137,10 +137,10 @@ def test_setup_workflow_runs_the_checks_and_prints_status_only():
     assert brain_co["continue-on-error"] is True                               # a failed checkout is reported as FAIL
 
 
-def test_keepalive_is_the_only_workflow_that_writes():
+def test_only_keepalive_and_the_unzip_helper_write():
     for f in FILES:
         perms = load(f)["permissions"]
-        assert (perms.get("contents") == "write") == (f.name == "keepalive.yml"), f.name
+        assert (perms.get("contents") == "write") == (f.name in ("keepalive.yml", "unzip.yml")), f.name
 
 
 def test_ci_builds_hugo_and_runs_pytest():

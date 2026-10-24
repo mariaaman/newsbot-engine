@@ -202,10 +202,14 @@ def estimate_write_tokens(fs: FactSheet, lang: str, cfg, brain, previous: dict |
     return estimate_tokens(build_messages(fs, lang, cfg, brain, previous), cfg.write.max_tokens)
 
 
-def write_article(llm, brain, cfg, fs: FactSheet, lang: str, previous: dict | None = None) -> tuple[dict, int]:
+def write_article(llm, brain, cfg, fs: FactSheet, lang: str, previous: dict | None = None, *,
+                  fix: str | None = None) -> tuple[dict, int]:
     """Returns (normalised article dict, number of sanitiser removals).
+    fix: one repair note (what the QA gates rejected) appended to the request for the single repair attempt.
     Raises BudgetExhausted / LLMError; the caller fails this language only."""
     msgs = build_messages(fs, lang, cfg, brain, previous)
+    if fix:
+        msgs.append({"role": "user", "content": fix})
     raw = llm.complete(f"write_{lang}", msgs, schema=validate_article, max_tokens=cfg.write.max_tokens)
     return normalise_article(raw, fs)
 

@@ -117,24 +117,45 @@ def _numbers_text(text: str) -> str:
     return strip_markers(text)
 
 
+# Office and role words that are ordinary English, not names of people, places or organisations. A name still has to be
+# in the fact sheet; these only describe a role ("the Senator", "Parliament") and carry no fact of their own.
+ROLE_WORDS = set("""president prime minister senator parliament member members justice king queen section article citizen
+citizens ministry government council committee court police army navy force forces party leader leaders chairman chair
+spokesman spokesperson official officials mayor governor judge""".split())
+_HYPHENS = re.compile("[\u2010\u2011\u2012\u2013\u2014\u2212-]")
+
+
 def unsupported_names(text: str, vocab: set[str]) -> list[str]:
-    """Latin-script capitalised words (not just sentence starters) that the fact sheet never mentions."""
+    """Latin-script capitalised words (not just sentence starters) that the fact sheet never mentions.
+    Not flagged: a word that also appears in lowercase in the same text (a title-case or sentence-case word such as
+    "Exceeds" is an ordinary word, a name is always capitalised), office words, and the parts of a hyphenated
+    compound are checked one by one (so "Turkish\u2010language" is judged by "Turkish")."""
+    lowered: set[str] = set()
+    for w in raw_words(strip_markers(text)):
+        for part in _HYPHENS.split(w):
+            if part and part[0].isalpha() and part[0].islower():
+                lowered.add(part.lower())
     bad: list[str] = []
     for line in strip_markers(text).splitlines():
         if line.lstrip().startswith("#"):
             continue
-        for sent in re.split(r"(?<=[.!?।])\s+", line):
+        for sent in re.split(r"(?<=[.!?\u0964])\s+", line):
             toks = raw_words(sent)
-            for i, w in enumerate(toks):
-                if len(w) < 2 or not w[0].isalpha() or not w[0].isupper() or any(c.isdigit() for c in w):
-                    continue
+            for i, tok in enumerate(toks):
                 nxt = toks[i + 1] if i + 1 < len(toks) else ""
-                if i == 0 and not (nxt[:1].isalpha() and nxt[:1].isupper()):
-                    continue                                          # ordinary sentence-initial word
-                lw = w.lower()
-                if lw in DATE_WORDS or lw in vocab or lw.rstrip("s") in vocab:
-                    continue
-                bad.append(w)
+                if tok.lower() in vocab or _HYPHENS.sub("-", tok).lower() in vocab:
+                    continue                                          # a compound the fact sheet itself uses
+                for w in _HYPHENS.split(tok):
+                    if len(w) < 2 or not w[0].isalpha() or not w[0].isupper() or any(c.isdigit() for c in w):
+                        continue
+                    if i == 0 and w is tok and not (nxt[:1].isalpha() and nxt[:1].isupper()):
+                        continue                                      # ordinary sentence-initial word
+                    lw = w.lower()
+                    if lw in DATE_WORDS or lw in vocab or lw.rstrip("s") in vocab:
+                        continue
+                    if lw in ROLE_WORDS or lw in lowered or lw.rstrip("s") in lowered:
+                        continue
+                    bad.append(w)
     return sorted(set(bad))
 
 
@@ -175,6 +196,14 @@ def llm_check(llm, brain, a: dict, fs: FactSheet) -> list[str]:
 
 
 # ---------------- the gates ----------------
+
+def offending_terms(a: dict, fs: FactSheet) -> tuple[list[str], list[str]]:
+    """(names, numbers) the article uses that the fact sheet does not support. Used only to tell the writer what to
+    remove in its one repair attempt; the words are never logged (public logs carry counts only)."""
+    nums, vocab, _ = fact_vocab(fs)
+    all_text = a["title"] + "\n" + article_text(a)
+    return unsupported_names(all_text, vocab), sorted(numbers_in(_numbers_text(all_text)) - nums)
+
 
 def run_gates(a: dict, fs: FactSheet, lang: str, cfg, *, recent: list | None = None, embedder=None,
               llm=None, brain=None, run_llm_check: bool = True, previous: dict | None = None) -> QAResult:

@@ -1,1 +1,2 @@
-Unzip at the ROOT of the newsbot-engine repo (replace all). See docs/MULTILANG.md. Then unzip the BRAIN zip in the brain repo.
+Go-live update (2026-10-24). Unzip at the ROOT of newsbot-engine (replace all). Then unzip the BRAIN update in the brain repo.
+Adds readiness workflow + scripts/readiness.py, one repair attempt for names/figures, smaller decisions log, hardened unzip.yml. See docs/GO_LIVE.md.

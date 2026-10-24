@@ -36,12 +36,46 @@ def save_stories(state_dir: str | Path, stories: dict[str, Story]) -> None:
     _atomic_write(Path(state_dir) / "stories.jsonl", "\n".join(lines) + ("\n" if lines else ""))
 
 
+DECISIONS_MAX_BYTES = 1_000_000        # the log is write-only (nothing reads it back); it must not grow with the feed volume
+DECISIONS_KEEP_DAYS = 3
+# Routine "nothing to do" reasons: thousands per day. They are written as ONE summary line per run (counts only).
+NOISY_SKIP = {"too_few_trusted_sources", "below_threshold", "run_cap_reached", "no_language_with_enough_sources"}
+
+
+def compact_decisions(path: Path, now: datetime, keep_days: int = DECISIONS_KEEP_DAYS) -> None:
+    """Shrink the log: routine SKIP lines are dropped (their counts live in the per-run summary lines); other lines
+    are kept for keep_days, except NEW / UPDATE lines (the audit trail of what was written), kept for 60 days.
+    Damaged lines are dropped."""
+    cutoff = iso(now - timedelta(days=keep_days))
+    keep_all_after = iso(now - timedelta(days=60))
+    kept: list[str] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            d = json.loads(line)
+            ts = str(d.get("ts", ""))
+        except ValueError:
+            continue
+        if d.get("action") == "SKIP" and d.get("reason") in NOISY_SKIP:
+            continue
+        if ts >= cutoff or (d.get("action") in ("NEW", "UPDATE") and ts >= keep_all_after):
+            kept.append(line)
+    _atomic_write(path, "\n".join(kept) + ("\n" if kept else ""))
+
+
 def append_decisions(state_dir: str | Path, now: datetime, decisions: list[dict]) -> None:
     path = Path(state_dir) / "decisions.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists() and path.stat().st_size > DECISIONS_MAX_BYTES:
+        compact_decisions(path, now)
+    noisy: dict[str, int] = {}
     with path.open("a", encoding="utf-8") as f:
         for d in decisions:
+            if d.get("action") == "SKIP" and d.get("reason") in NOISY_SKIP:
+                noisy[d["reason"]] = noisy.get(d["reason"], 0) + 1
+                continue
             f.write(json.dumps({"ts": iso(now), **d}, ensure_ascii=False, sort_keys=True) + "\n")
+        if noisy:
+            f.write(json.dumps({"ts": iso(now), "action": "SKIP_SUMMARY", "counts": noisy}, sort_keys=True) + "\n")
 
 
 def load_cooldowns(state_dir: str | Path) -> dict[str, datetime]:
