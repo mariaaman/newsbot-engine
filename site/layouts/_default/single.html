@@ -12,7 +12,7 @@
 {{- $parts := split $c "<h2" -}}
 {{- range $i, $p := $parts }}
 {{- if eq $i 2 }}{{ partial "timeline.html" $ }}{{ partial "adslot.html" (dict "ctx" $ "slot" "mid_article") }}{{ end }}
-{{- if gt $i 0 }}<h2{{ end }}{{ $p | safeHTML }}
+{{- if gt $i 0 }}{{ printf "<h2%s" $p | safeHTML }}{{ else }}{{ $p | safeHTML }}{{ end }}
 {{- end }}
 {{- if lt (len $parts) 3 }}{{ partial "timeline.html" . }}{{ end }}
 </div>

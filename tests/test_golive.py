@@ -120,3 +120,14 @@ def test_unzip_helper_runs_only_for_root_zips_and_never_on_its_own_commit():
     job = wf["jobs"]["unzip"]
     assert "Auto extracted" in job["if"] and job["timeout-minutes"] == 15
     assert ".git/*" in " ".join(s.get("run", "") for s in job["steps"])
+
+
+# ---- Hugo templates: Go html/template refuses a tag that is opened in one {{ if }} branch and finished outside it
+def test_no_html_tag_is_split_across_template_actions():
+    import re
+    bad = []
+    for f in sorted((ROOT / "site" / "layouts").rglob("*.html")):
+        for n, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+            if re.search(r"<[a-zA-Z][a-zA-Z0-9]*\s*\{\{", line) and not re.search(r"<[a-zA-Z][a-zA-Z0-9]*\s*\{\{[^}]*\}\}[^<>]*>", line):
+                bad.append((f.name, n))          # "<h2{{ end }}" style: the tag is left open at the end of a branch
+    assert not bad, bad
