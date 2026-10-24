@@ -30,7 +30,7 @@ DEFAULTS = {
                    "story_match_threshold": 0.25, "min_shared_tokens": 2},
     "scoring": {"threshold": 0.6, "per_language_threshold": {},
                 "weights": {"velocity": 0.3, "breadth": 0.25, "trends": 0.2, "recency": 0.1,
-                            "topic_fit": 0.15, "saturation": 0.2},
+                            "topic_fit": 0.15, "saturation": 0.2, "global_reach": 0.0},
                 "recency_half_life_hours": 6, "velocity_window_hours": 2, "velocity_norm": 3,
                 "breadth_norm": 6, "trends_top_n": 20, "saturation_start": 8, "saturation_span": 8},
     "qa": {"min_words": {"bn": 450, "en": 500}, "max_ngram_overlap": 0.08, "ngram_size": 8,
