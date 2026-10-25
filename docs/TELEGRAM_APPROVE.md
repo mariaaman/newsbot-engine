@@ -15,7 +15,25 @@
 - পুরনো `pending/`-এর খসড়াগুলোর জন্য মেসেজ আর আসবে না। শুধু এখন থেকে নতুন তৈরি হওয়া খসড়ার মেসেজ আসবে।
 - PR-ভিত্তিক (সংবেদনশীল নয়) লেখার প্রবাহ আগের মতোই: **PR খুলুন** বাটন।
 
-## সেটআপ (একবার, ফোন থেকেই হয়)
+## সেটআপ: স্বয়ংক্রিয় (সহজ পথ)
+
+Cloudflare-এ হাতে কিছু বানাতে হয় না। `setup-approve` workflow Worker বানায়, সিক্রেট বসায়, টেলিগ্রামের webhook ঠিক করে, আর brain কনফিগে দুটো লাইন নিজেই বসিয়ে দেয়।
+
+**ক. Cloudflare টোকেনে অনুমতি যোগ করুন (একবার)**
+Cloudflare dashboard, Manage Account, **Account API Tokens** (বা My Profile, API Tokens), আপনার বর্তমান টোকেনের পাশে **Edit**। Permissions-এ যোগ করুন: **Account, Workers Scripts, Edit**। Save করুন। টোকেনের মান বদলায় না, তাই GitHub-এর সিক্রেট ঠিকই থাকে।
+
+**খ. নতুন GitHub টোকেন বানিয়ে সিক্রেট হিসেবে রাখুন**
+GitHub, Settings, Developer settings, Fine-grained tokens, Generate new token। Only select repositories: `newsbot-brain` ও `newsbot-engine`। Permissions: **Contents: Read and write**, **Actions: Read and write**। টোকেন কপি করে engine রিপোর Settings, Secrets and variables, Actions, **New repository secret**-এ নাম `APPROVE_GH_TOKEN` দিয়ে রাখুন।
+
+**গ. একবার Workers & Pages খুলে দেখুন**
+Cloudflare dashboard-এ Workers & Pages খুলুন। `workers.dev` subdomain বাছাই করতে বললে একটা নাম দিন। আগে থেকে থাকলে কিছু করতে হবে না।
+
+**ঘ. workflow চালান**
+engine রিপোর Actions, বাম তালিকায় **setup-approve**, **Run workflow**। সফল হলে লগে ধাপগুলো `ok` দেখাবে আর টেলিগ্রামে "অনুমোদন চালু হয়েছে" মেসেজ আসবে। লগ পাবলিক, তাই সেখানে শুধু `ok` বা `fail:কারণ` লেখা থাকে, ঠিকানা বা সিক্রেট কখনো নয়।
+
+এরপর ধাপ ৫ (`hourly` চালিয়ে পরীক্ষা) পর্যন্ত বাকি সব নিচের হাতে-করা অংশ বাদ দিয়ে এগোতে পারেন।
+
+## সেটআপ: হাতে (বিকল্প, স্বয়ংক্রিয়টা না চললে)
 
 ### ১. GitHub টোকেন (Worker-এর জন্য)
 GitHub, Settings, Developer settings, Personal access tokens, **Fine-grained tokens**, Generate.

@@ -1,0 +1,63 @@
+name: setup-approve
+# One click: deploy the Telegram approve Worker to Cloudflare, store its secrets, register the Telegram webhook and switch on
+# approve_buttons + edit_url in the brain config (docs/TELEGRAM_APPROVE.md). Safe to run again.
+# Needs these repository secrets: CLOUDFLARE_API_TOKEN (with Workers Scripts: Edit), CLOUDFLARE_ACCOUNT_ID, TELEGRAM_BOT_TOKEN,
+# TELEGRAM_CHAT_ID, BRAIN_REPO_TOKEN (Contents: write on the brain) and APPROVE_GH_TOKEN (Contents + Actions: write on both repos).
+# The log is public: status words only, never the Worker address or any secret.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: setup-approve
+  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
+jobs:
+  setup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      BRAIN_REPO: ${{ vars.BRAIN_REPO }}
+      BRAIN_BRANCH: ${{ vars.BRAIN_BRANCH || 'main' }}
+    steps:
+      - name: Checkout engine
+        uses: actions/checkout@v4                      # VERIFY: pin to a commit SHA before going live
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v5                  # VERIFY: pin to a commit SHA before going live
+        with:
+          python-version: "3.12"
+      - name: Check inputs (names only)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          APPROVE_GH_TOKEN: ${{ secrets.APPROVE_GH_TOKEN }}
+          BRAIN_REPO_TOKEN: ${{ secrets.BRAIN_REPO_TOKEN }}
+        run: python scripts/setup_approve_worker.py --check
+      - name: Deploy the Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        working-directory: worker
+        run: |
+          if npx --yes wrangler@4 deploy --var "BRAIN_REPO:$BRAIN_REPO" --var "ENGINE_REPO:$GITHUB_REPOSITORY" > "$RUNNER_TEMP/wrangler.log" 2>&1; then   # VERIFY wrangler major version and flags
+            echo "worker deploy: ok"
+          else
+            sed -E 's#https://[A-Za-z0-9./_-]*workers\.dev[A-Za-z0-9./_-]*#<address hidden>#g' "$RUNNER_TEMP/wrangler.log" | tail -40
+            echo "worker deploy: failed"
+            exit 1
+          fi
+      - name: Secrets, webhook, brain config, Telegram message
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          APPROVE_GH_TOKEN: ${{ secrets.APPROVE_GH_TOKEN }}
+          BRAIN_REPO_TOKEN: ${{ secrets.BRAIN_REPO_TOKEN }}
+        run: python scripts/setup_approve_worker.py
