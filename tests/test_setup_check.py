@@ -2,6 +2,7 @@
 import importlib.util
 import tempfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from tests.helpers import ROOT, TEMPLATE
 
@@ -20,8 +21,12 @@ class FakeHttp:
 
     def __call__(self, method, url, headers, body=None):
         self.calls.append((method, url))
+        parsed = urlsplit(url)
         for (m, frag), resp in self.routes.items():
-            if m == method and frag in url:
+            route_path, sep, route_query = frag.partition("?")
+            path_match = route_path in parsed.path if route_path.endswith("/") else parsed.path.endswith(route_path)
+            query_match = not sep or parsed.query == route_query
+            if m == method and path_match and query_match:
                 return resp
         return 0, {}
 

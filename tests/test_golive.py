@@ -119,7 +119,9 @@ def test_unzip_helper_runs_only_for_root_zips_and_never_on_its_own_commit():
     assert wf["on"]["push"]["paths"] == ["*.zip"] and wf["permissions"] == {"contents": "write"}
     job = wf["jobs"]["unzip"]
     assert "Auto extracted" in job["if"] and job["timeout-minutes"] == 15
-    assert ".git/*" in " ".join(s.get("run", "") for s in job["steps"])
+    script = "\n".join(s.get("run", "") for s in job["steps"])
+    assert "zipfile.ZipFile" in script and '".git" in parts' in script
+    assert 'parts[:2] == (".github", "workflows")' in script
 
 
 # ---- Hugo templates: Go html/template refuses a tag that is opened in one {{ if }} branch and finished outside it
