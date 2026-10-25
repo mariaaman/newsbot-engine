@@ -22,7 +22,7 @@
 ## ৪. `auto` মোডে যাওয়ার শর্ত (readiness নিজেই মাপে)
 - অন্তত ২০টি review PR merge হয়েছে, এবং merge-হার ৯০% বা বেশি।
 - সর্বশেষ `hourly` রান সফল।
-- Actions-এর `@v4`/`@v5` ট্যাগ (`VERIFY` মন্তব্য) commit SHA-তে pin করুন।
+- প্রতিটি GitHub Action full commit SHA-তে pinned থাকবে; পাশে release version comment থাকবে।
 
 ## ৫. AdSense
 - প্রকাশিত আর্টিকেল ও ট্রাস্ট পেজ থাকলে তবেই আবেদন করুন। অনুমোদনের পর brain-এ `ads.enabled: true` ও `ads.publisher_id` দিন।

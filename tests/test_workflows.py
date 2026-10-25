@@ -14,7 +14,6 @@ from tests.helpers import ROOT
 WF_DIR = ROOT / ".github" / "workflows"
 FILES = sorted(WF_DIR.glob("*.yml"))
 SECRET_NAME = re.compile(r"(TOKEN|KEY|SECRET|PASSWORD)", re.I)
-TAG = re.compile(r"^v\d+(\.\d+){0,2}$")
 SHA = re.compile(r"^[0-9a-f]{40}$")
 HARDCODED = re.compile(r"(ghp_[A-Za-z0-9]{20,}|github_pat_\w{20,}|gsk_\w{20,}|AIza[\w-]{20,}|cfut_\w{20,})")
 
@@ -60,16 +59,53 @@ def test_triggers():
     assert "pull_request" in ci
 
 
-def test_actions_are_pinned_tag_with_verify_or_sha():
+def test_actions_are_pinned_to_full_shas():
     for f in FILES:
         for line in f.read_text(encoding="utf-8").splitlines():
             m = re.match(r"\s*(?:-\s*)?uses:\s*(\S+)(.*)", line)
             if not m:
                 continue
             ref = m.group(1).split("@", 1)[1] if "@" in m.group(1) else ""
-            assert SHA.match(ref) or TAG.match(ref), (f.name, line)
-            if TAG.match(ref):
-                assert "VERIFY" in line, (f.name, line)      # tags are mutable until pinned to a SHA
+            assert SHA.fullmatch(ref), (f.name, line)
+
+
+def test_unzip_helper_validates_paths_and_skips_workflows(tmp_path):
+    import stat
+    import sys
+    import zipfile
+
+    run = next(s for s in run_scripts(load(WF_DIR / "unzip.yml")) if "zipfile.ZipFile" in s)
+    prefix = 'python - "$file" <<\'PY\'\n'
+    validator = run.split(prefix, 1)[1].split("\nPY", 1)[0]
+    validator_path = tmp_path / "validate_zip.py"
+    validator_path.write_text(validator, encoding="utf-8")
+
+    safe = tmp_path / "safe.zip"
+    with zipfile.ZipFile(safe, "w") as archive:
+        archive.writestr(".github/workflows/unzip.yml", "must stay unchanged")
+        archive.writestr("./.github/workflows/other.yml", "must stay unchanged")
+        archive.writestr("config/newsbot.yaml", "safe config")
+    result = subprocess.run([sys.executable, str(validator_path), str(safe)], cwd=tmp_path, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "config/newsbot.yaml").read_text(encoding="utf-8") == "safe config"
+    assert not (tmp_path / ".github/workflows/unzip.yml").exists()
+    assert not (tmp_path / ".github/workflows/other.yml").exists()
+
+    unsafe = tmp_path / "unsafe.zip"
+    escape = f"../{tmp_path.name}-escape.txt"
+    with zipfile.ZipFile(unsafe, "w") as archive:
+        archive.writestr(escape, "outside")
+    result = subprocess.run([sys.executable, str(validator_path), str(unsafe)], cwd=tmp_path, capture_output=True, text=True)
+    assert result.returncode != 0 and not (tmp_path.parent / escape[3:]).exists()
+
+    symlink = tmp_path / "symlink.zip"
+    entry = zipfile.ZipInfo("link")
+    entry.create_system = 3
+    entry.external_attr = (stat.S_IFLNK | 0o777) << 16
+    with zipfile.ZipFile(symlink, "w") as archive:
+        archive.writestr(entry, "../outside")
+    result = subprocess.run([sys.executable, str(validator_path), str(symlink)], cwd=tmp_path, capture_output=True, text=True)
+    assert result.returncode != 0
 
 
 def test_secrets_only_through_secrets_context_and_never_echoed():

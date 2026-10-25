@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4                      # VERIFY: pin to a commit SHA before going live
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # actions/checkout v7.0.1
       - name: Touch keepalive file and push
         run: |
           date -u +%Y-%m-%d > .github/keepalive
