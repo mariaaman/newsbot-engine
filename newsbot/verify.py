@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 from newsbot.extract import numbers_in
 from newsbot.models import Claim, Fact, FactSheet, Source
@@ -29,6 +30,33 @@ def org_key(domain: str) -> str:
     else:
         key = ".".join(parts[-2:])
     return _ORG_ALIASES.get(key, key)
+
+
+_WORD = re.compile(r"[^\W\d_]{3,}")
+
+
+def _names(text: str) -> set[str]:
+    """Capitalised words that are NOT at the start of a sentence (a rough proper-noun detector for cased scripts).
+    Bengali, Japanese, Arabic etc. have no capitals, so they yield nothing and are never filtered by this guard."""
+    out = set()
+    for m in _WORD.finditer(text):
+        w = m.group(0)
+        before = text[:m.start()].rstrip(" \"'(\u201c")
+        if not w[0].isupper() or not before or before[-1] in ".!?:;":
+            continue
+        out.add(w.lower())
+    return out
+
+
+def _off_topic(text: str, main_names: set[str], main_text: str) -> bool:
+    """A leftover claim (one the model left out of every group) that names people/places which occur nowhere in the
+    grouped claims is about ANOTHER event (a roundup line, a sidebar): the verify prompt told the model to leave it
+    out, so it must not come back as a 'reported' fact. Names are compared with the grouped text, not only names."""
+    names = _names(text)
+    if not names:
+        return False
+    low = main_text.lower()
+    return not any(n in main_names or n in low for n in names)
 
 
 def validate_facts(data) -> list[dict]:
@@ -84,10 +112,12 @@ def build_fact_sheet(llm, brain, story_id: str, sources: list[Source], claims: l
         facts.append(Fact("", g["kind"], stmt, status, ids, sorted({c.source_id for c in group}),
                           g["note"] or auto_note))
     dropped = 0
+    main_text = " ".join([by_claim[i].text for i in used] + [f.statement for f in facts])
+    main_names = _names(main_text)
     for c in claims:                                   # leftovers become single-source facts, but never bare fragments:
         if c.id not in used:                           # a lone name, place or time ("রাজশাহী") says nothing to a writer
-            if len(c.text.split()) < MIN_LEFTOVER_WORDS:
-                dropped += 1
+            if len(c.text.split()) < MIN_LEFTOVER_WORDS or _off_topic(c.text, main_names, main_text):
+                dropped += 1                           # (also: claims about another event, left out on purpose)
                 continue
             facts.append(Fact("", c.kind, c.text, "reported", [c.id], [c.source_id], ""))
     facts = facts[:MAX_FACTS]
