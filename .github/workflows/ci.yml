@@ -21,6 +21,8 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: pytest
       - run: bash -n scripts/brain_commit.sh
+      - name: Test the Telegram approve Worker (plain Node, no dependencies)
+        run: node --test worker/test.mjs
       - run: python -m newsbot run --mode dry-run --brain brain-template
       - name: Install Hugo
         uses: peaceiris/actions-hugo@v3    # VERIFY: pin to a commit SHA

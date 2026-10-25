@@ -195,6 +195,8 @@ class TelegramCfg(_Base):
     report_idle_runs: bool = True         # a quiet message every run, even when nothing was covered
     include_summary: bool = True          # review messages carry the summary (it passes through Telegram's servers)
     max_lines: int = Field(60, ge=10, le=200)
+    approve_buttons: bool = False         # Approve / Reject buttons on pending drafts; needs the approve Worker (docs/TELEGRAM_APPROVE.md)
+    edit_url: str = Field("", pattern=r"^(https://[A-Za-z0-9.-]+(:[0-9]+)?/?)?$")   # the approve Worker's address: pending drafts get a private view-and-edit link
 
 
 class NotifyCfg(_Base):

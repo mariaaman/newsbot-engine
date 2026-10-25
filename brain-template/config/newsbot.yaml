@@ -57,3 +57,5 @@ notify:
     report_idle_runs: true    # a quiet (silent) report every run; false = only when something happened
     include_summary: true     # review messages carry the article summary; it passes through Telegram's servers
     max_lines: 60             # a run report longer than this is cut with a "... more lines" note
+    approve_buttons: false    # true after the approve Worker is live (docs/TELEGRAM_APPROVE.md): Approve / Reject buttons on sensitive drafts
+    edit_url: ""             # https://newsbot-approve.<you>.workers.dev : pending drafts get a private link to read, edit, approve or reject

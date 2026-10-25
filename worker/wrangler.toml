@@ -1,0 +1,9 @@
+# Optional: `npx wrangler deploy` from this folder. On a phone, paste index.js into the Cloudflare dashboard instead
+# (docs/TELEGRAM_APPROVE.md). Secrets (GH_TOKEN, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, WEBHOOK_SECRET) are never put here.
+name = "newsbot-approve"
+main = "index.js"
+compatibility_date = "2025-09-01"
+
+[vars]
+BRAIN_REPO = "OWNER/newsbot-brain"
+ENGINE_REPO = "OWNER/newsbot-engine"
