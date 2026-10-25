@@ -56,6 +56,9 @@ def check_brain_repo(env, http) -> list[Result]:
     if code == 200:
         out.append(("OK" if (data.get("permissions") or {}).get("push") else "FAIL", "brain token can push"))
         out.append(("OK" if data.get("private") else "FAIL", "brain repo is private"))
+        pr_code, _ = http("GET", f"{GH}/repos/{repo}/pulls?state=all&per_page=1",
+                          {"Authorization": f"Bearer {tok}", "Accept": "application/vnd.github+json"})
+        out.append(("OK" if pr_code == 200 else "FAIL", "brain token can read pull requests"))
     return out
 
 

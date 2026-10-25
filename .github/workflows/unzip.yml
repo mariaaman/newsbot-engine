@@ -1,7 +1,6 @@
 name: Auto Unzip
-# Helper for phone-only work: push a .zip to the repo ROOT and this unpacks it over the repo, deletes the zip and commits.
-# It runs only when a push touches a root-level .zip, never on ordinary pushes. Needs the WORKFLOW_PAT secret (a token
-# allowed to change workflow files). Remove this file once you no longer upload zips.
+# Phone ZIP helper: validates archive paths, skips workflow files, then commits ordinary repo files.
+# It runs only for root-level .zip pushes. WORKFLOW_PAT needs Contents: write; workflow changes must use a normal PR.
 on:
   push:
     paths: ["*.zip"]
@@ -16,14 +15,55 @@ jobs:
     timeout-minutes: 15
     if: ${{ !contains(github.event.head_commit.message, 'Auto extracted') }}
     steps:
-      - uses: actions/checkout@v4                      # VERIFY: pin to a commit SHA before going live
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # actions/checkout v7.0.1
         with:
           token: ${{ secrets.WORKFLOW_PAT }}
       - name: Unzip to root
         run: |
           shopt -s nullglob
           for file in *.zip; do
-            unzip -o -q "$file" -x ".git/*" -d .
+            python - "$file" <<'PY'
+          import shutil
+          import stat
+          import sys
+          import zipfile
+          from pathlib import Path, PurePosixPath
+
+          root = Path.cwd().resolve()
+          members = []
+          total_bytes = 0
+          with zipfile.ZipFile(sys.argv[1]) as archive:
+              for info in archive.infolist():
+                  name = info.filename.replace("\\", "/")
+                  path = PurePosixPath(name)
+                  parts = tuple(part for part in path.parts if part not in ("", "."))
+                  mode = (info.external_attr >> 16) & 0xFFFF
+                  if (path.is_absolute() or any(part == ".." for part in parts)
+                          or ".git" in parts or stat.S_ISLNK(mode)):
+                      raise SystemExit("unsafe ZIP path; refusing extraction")
+                  if not parts or parts[:2] == (".github", "workflows"):
+                      continue
+                  if not info.is_dir():
+                      total_bytes += info.file_size
+                      if total_bytes > 100_000_000:
+                          raise SystemExit("ZIP exceeds the 100 MB extraction limit")
+                  members.append((info, parts, mode))
+                  if len(members) > 5000:
+                      raise SystemExit("ZIP exceeds the 5,000-file extraction limit")
+              for info, parts, mode in members:
+                  destination = root.joinpath(*parts)
+                  if not destination.resolve().is_relative_to(root):
+                      raise SystemExit("ZIP path escapes the repository")
+                  if info.is_dir():
+                      destination.mkdir(parents=True, exist_ok=True)
+                      continue
+                  destination.parent.mkdir(parents=True, exist_ok=True)
+                  with archive.open(info) as src, destination.open("wb") as dst:
+                      shutil.copyfileobj(src, dst)
+                  file_mode = stat.S_IMODE(mode)
+                  if file_mode:
+                      destination.chmod(file_mode)
+          PY
             rm "$file"
           done
       - name: Commit

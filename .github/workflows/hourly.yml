@@ -33,12 +33,12 @@ jobs:
           case "$MODE" in auto|review|dry-run) ;; *) echo "bad mode"; exit 2 ;; esac
       - name: Checkout engine
         id: checkout_engine
-        uses: actions/checkout@v4                      # VERIFY: pin to a commit SHA before going live
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # actions/checkout v7.0.1
         with:
           persist-credentials: false
       - name: Checkout brain (private)
         id: checkout_brain
-        uses: actions/checkout@v4                      # VERIFY: pin to a commit SHA before going live
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # actions/checkout v7.0.1
         with:
           repository: ${{ vars.BRAIN_REPO }}
           token: ${{ secrets.BRAIN_REPO_TOKEN }}
@@ -47,7 +47,7 @@ jobs:
           fetch-depth: 1
       - name: Set up Python
         id: setup_python
-        uses: actions/setup-python@v5                  # VERIFY: pin to a commit SHA before going live
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # actions/setup-python v7.1.0
         with:
           python-version: "3.12"
           cache: pip
@@ -79,7 +79,7 @@ jobs:
       - name: Install Hugo
         id: hugo
         if: steps.plan.outputs.deploy == 'true'
-        uses: peaceiris/actions-hugo@v3                # VERIFY: pin to a commit SHA; VERIFY it caches the binary
+        uses: peaceiris/actions-hugo@2752ce1d29631191ea3f27c23495fa06139a5b78 # peaceiris/actions-hugo v3.2.1
         with:
           hugo-version: "0.139.0"                      # VERIFY current Hugo extended version (same as ci.yml)
           extended: true
@@ -95,7 +95,7 @@ jobs:
         run: python scripts/check_file_count.py site/public
       - name: Cache npm (wrangler)
         if: steps.plan.outputs.deploy == 'true'
-        uses: actions/cache@v4                         # VERIFY: pin to a commit SHA before going live
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # actions/cache v6.1.0
         with:
           path: ~/.npm
           key: npm-wrangler-${{ runner.os }}-v1
@@ -105,7 +105,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx --yes wrangler@4 pages deploy site/public --project-name "$PAGES_PROJECT" --branch main --commit-dirty=true   # VERIFY wrangler major version and flags
+        run: npx --yes wrangler@4.147.0 pages deploy site/public --project-name "$PAGES_PROJECT" --branch main --commit-dirty=true   # pinned Wrangler CLI v4.147.0
       - name: Record deploy in brain state
         id: record
         if: steps.plan.outputs.deploy == 'true'

@@ -18,18 +18,18 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout engine
-        uses: actions/checkout@v4                      # VERIFY: pin to a commit SHA before going live
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # actions/checkout v7.0.1
         with:
           persist-credentials: false
       - name: Checkout brain (private)
-        uses: actions/checkout@v4                      # VERIFY: pin to a commit SHA before going live
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # actions/checkout v7.0.1
         with:
           repository: ${{ vars.BRAIN_REPO }}
           token: ${{ secrets.BRAIN_REPO_TOKEN }}
           path: brain
           fetch-depth: 1
       - name: Set up Python
-        uses: actions/setup-python@v5                  # VERIFY: pin to a commit SHA before going live
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # actions/setup-python v7.1.0
         with:
           python-version: "3.12"
           cache: pip
@@ -69,7 +69,7 @@ jobs:
         continue-on-error: true
         run: python -m newsbot run --mode dry-run --brain brain
       - name: Install Hugo
-        uses: peaceiris/actions-hugo@v3                # VERIFY: pin to a commit SHA; same version as ci.yml
+        uses: peaceiris/actions-hugo@2752ce1d29631191ea3f27c23495fa06139a5b78 # peaceiris/actions-hugo v3.2.1
         with:
           hugo-version: "0.139.0"                      # VERIFY current Hugo extended version (same as ci.yml)
           extended: true

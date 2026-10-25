@@ -2,6 +2,7 @@
 import importlib.util
 import tempfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from tests.helpers import ROOT, TEMPLATE
 
@@ -20,13 +21,18 @@ class FakeHttp:
 
     def __call__(self, method, url, headers, body=None):
         self.calls.append((method, url))
+        parsed = urlsplit(url)
         for (m, frag), resp in self.routes.items():
-            if m == method and frag in url:
+            route_path, sep, route_query = frag.partition("?")
+            path_match = route_path in parsed.path if route_path.endswith("/") else parsed.path.endswith(route_path)
+            query_match = not sep or parsed.query == route_query
+            if m == method and path_match and query_match:
                 return resp
         return 0, {}
 
 
-GOOD = {("GET", "/repos/me/newsbot-brain"): (200, {"private": True, "permissions": {"push": True}}),
+GOOD = {("GET", "/pulls?state=all&per_page=1"): (200, []),
+        ("GET", "/repos/me/newsbot-brain"): (200, {"private": True, "permissions": {"push": True}}),
         ("GET", "/tokens/verify"): (200, {"success": True}),
         ("GET", "/pages/projects/newsbot"): (200, {}),
         ("POST", "/ai/run/"): (200, {"success": True})}
@@ -42,10 +48,13 @@ def test_env_check_flags_missing_and_bad_values_without_leaking():
 
 def test_brain_repo_checks_reachability_push_and_privacy():
     ok = sc.check_brain_repo(ENV, FakeHttp(GOOD))
-    assert [s for s, _ in ok] == ["OK", "OK", "OK"]
+    assert [s for s, _ in ok] == ["OK", "OK", "OK", "OK"]
     public = {**GOOD, ("GET", "/repos/me/newsbot-brain"): (200, {"private": False, "permissions": {"push": False}})}
     names = dict((n, s) for s, n in sc.check_brain_repo(ENV, FakeHttp(public)))
     assert names["brain token can push"] == "FAIL" and names["brain repo is private"] == "FAIL"
+    restricted = {k: v for k, v in GOOD.items() if "/pulls?" not in k[1]}
+    names = dict((n, s) for s, n in sc.check_brain_repo(ENV, FakeHttp(restricted)))
+    assert names["brain token can read pull requests"] == "FAIL"
     assert sc.check_brain_repo(ENV, FakeHttp({}))[0][0] == "FAIL"
 
 
