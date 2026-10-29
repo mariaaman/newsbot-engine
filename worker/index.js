@@ -104,7 +104,7 @@ export const hasGateFailures = (md) => {
 
 // ---------------- GitHub ----------------
 
-async function gh(env, path, init = {}) {
+export async function gh(env, path, init = {}) {
   const r = await fetch(GH + path, {
     ...init,
     headers: {
@@ -118,19 +118,19 @@ async function gh(env, path, init = {}) {
   return { status: r.status, json };
 }
 
-function must(res, ...ok) {
+export function must(res, ...ok) {
   if (!ok.includes(res.status)) throw new Error(`github ${res.status}`);
   return res.json;
 }
 
-function b64utf8(b64) {
+export function b64utf8(b64) {
   const bin = atob(b64.replace(/\n/g, ""));
   return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
 }
 
 const repos = (env) => ({ brain: env.BRAIN_REPO, branch: env.BRAIN_BRANCH || "main", engine: env.ENGINE_REPO, eb: env.ENGINE_BRANCH || "main" });
 
-async function findDraft(env, lang, ref) {
+export async function findDraft(env, lang, ref) {
   const { brain, branch } = repos(env);
   const res = await gh(env, `/repos/${brain}/contents/pending/${lang}?ref=${encodeURIComponent(branch)}`);
   if (res.status === 404) return null;
@@ -143,14 +143,14 @@ async function findDraft(env, lang, ref) {
   return null;
 }
 
-async function readDraft(env, draft) {
+export async function readDraft(env, draft) {
   const { brain, branch } = repos(env);
   const file = must(await gh(env, `/repos/${brain}/contents/${draft.path}?ref=${encodeURIComponent(branch)}`), 200);
   return { md: b64utf8(file.content), version: file.sha };
 }
 
 /** One atomic commit: write `put` (path -> text), delete `del` (paths). Retries when the branch moved meanwhile. */
-async function commit(env, message, put, del) {
+export async function commit(env, message, put, del) {
   const { brain, branch } = repos(env);
   for (let attempt = 0; attempt < 3; attempt++) {
     const head = must(await gh(env, `/repos/${brain}/git/ref/heads/${encodeURIComponent(branch)}`), 200).object.sha;
@@ -170,7 +170,7 @@ async function commit(env, message, put, del) {
   throw new Error("branch kept moving");
 }
 
-async function deploy(env) {
+export async function deploy(env) {
   const { engine, eb } = repos(env);
   const d = await gh(env, `/repos/${engine}/actions/workflows/deploy.yml/dispatches`, { method: "POST", body: JSON.stringify({ ref: eb }) });
   return d.status === 204;
