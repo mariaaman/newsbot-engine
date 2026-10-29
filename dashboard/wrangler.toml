@@ -3,6 +3,7 @@
 name = "newsbot-dashboard"
 main = "src/index.js"
 compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat"]
 
 [assets]
 directory = "./public"
