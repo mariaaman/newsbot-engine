@@ -13,8 +13,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4          # VERIFY: pin to a commit SHA before going live
-      - uses: actions/setup-python@v5      # VERIFY: pin to a commit SHA
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
           python-version: "3.12"
           cache: pip
@@ -27,7 +27,7 @@ jobs:
         run: node --test dashboard/test/*.test.mjs
       - run: python -m newsbot run --mode dry-run --brain brain-template
       - name: Install Hugo
-        uses: peaceiris/actions-hugo@v3    # VERIFY: pin to a commit SHA
+        uses: peaceiris/actions-hugo@2752ce1d29631191ea3f27c23495fa06139a5b78  # v3
         with:
           hugo-version: "0.139.0"          # VERIFY current Hugo extended version
           extended: true
