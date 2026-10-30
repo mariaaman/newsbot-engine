@@ -65,9 +65,14 @@ def check_brain(brain: Path, engine: Path) -> dict:
     base = str(site.get("base_url", ""))
     add("PASS" if base.startswith("https://") and "example" not in base else "FAIL", "site.base_url is a real https URL")
     add("PASS" if site.get("name") and "example" not in str(site.get("name")).lower() else "FAIL", "site.name set")
-    add("INFO", "ads", "enabled" if ads.get("enabled") else "disabled (turn on only after AdSense approval)")
-    if ads.get("enabled") and not str(ads.get("publisher_id", "")).startswith("pub-"):
-        add("FAIL", "ads.enabled needs ads.publisher_id (pub-...)")
+    network = str(ads.get("network") or "adsense").lower()
+    add("INFO", "ads", f"enabled ({network})" if ads.get("enabled") else "disabled (turn on only after your ad network approves the site)")
+    if ads.get("enabled"):
+        if network == "adsterra":
+            add("PASS" if (ads.get("scripts") or ads.get("slots")) else "FAIL", "ads.enabled needs ads.scripts or ads.slots (your ad code)")
+            add("PASS" if ads.get("txt_lines") else "WARN", "ads.txt_lines has the line from the ad network dashboard")
+        elif not str(ads.get("publisher_id", "")).startswith("pub-"):
+            add("FAIL", "ads.enabled needs ads.publisher_id (pub-...)")
     # trust pages: the brain override wins over the engine's shipped page
     left = 0
     for lang in langs:

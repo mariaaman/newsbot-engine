@@ -44,10 +44,17 @@ sensitive:
     minors: [child, children, minor, minors, juvenile*, teenager*, underage, under-age, schoolgirl*, schoolboy*, শিশু, কিশোর, নাবালক, অপ্রাপ্তবয়স্ক]
     financial_advice: [invest in, investment advice, stock tip*, buy shares, should buy, crypto*, bitcoin, financial advice, guaranteed return*, বিনিয়োগ, ক্রিপ্টো, বিটকয়েন]
 ads:
-  enabled: false          # keep false until AdSense approves the site
-  publisher_id: ""        # e.g. pub-1234567890123456
-  consent_required: false # true shows a consent banner and loads ads only after "accept"
-  slots: {}               # optional ad-unit ids: {after_summary: "123", mid_article: "456", end_article: "789"}
+  enabled: false          # keep false until your ad network approves the site AND the ad code below is filled in
+  network: adsense        # adsense | adsterra (adsterra = any network that gives you script URLs or ad-unit code)
+  publisher_id: ""        # adsense only, e.g. pub-1234567890123456
+  consent_required: true  # shows a consent banner and loads ads only after "accept"
+  slots: {}               # adsense: ad-unit ids {after_summary: "123", mid_article: "456", end_article: "789"}
+                          # adsterra: the HTML snippet from your dashboard for each place, e.g.
+                          #   mid_article: |
+                          #     <script async data-cfasync="false" src="//pl000.example/abc/invoke.js"></script>
+                          #     <div id="container-abc"></div>
+  scripts: []             # adsterra: site-wide script URLs (e.g. a Social Bar), https only: ["https://pl000.example/abc.js"]
+  txt_lines: []           # adsterra: the ads.txt line(s) from your dashboard, e.g. "adsterra.com, 1234567, DIRECT, <id>"
 # Telegram: every step result (ok / fail / error / skip) and every review request in one chat.
 # Needs the TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID secrets in the engine repo; without them nothing is sent.
 notify:

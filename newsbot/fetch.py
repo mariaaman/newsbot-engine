@@ -6,7 +6,6 @@ import codecs
 import html as htmllib
 import json
 import logging
-import os
 import re
 import urllib.robotparser
 from dataclasses import dataclass
@@ -19,7 +18,7 @@ from newsbot.models import Cluster, Item, Source, iso
 from newsbot.prompts import strip_injection
 
 log = logging.getLogger("newsbot.fetch")
-USER_AGENT = f"NewsBotEngine/0.1 (+{os.environ.get('NEWSBOT_CONTACT_URL', 'https://example.invalid/about')})"  # set NEWSBOT_CONTACT_URL to your site's about page
+from newsbot.netsafe import safe_get, user_agent    # noqa: E402  (agent string is built per call, redirects are checked)
 MAX_CHARS = 6000
 MAX_BYTES = 1_500_000
 TIMEOUT_S = 10
@@ -37,18 +36,8 @@ Fetcher = Callable[[str], FetchResult]
 
 def http_fetcher(timeout: float = TIMEOUT_S, max_bytes: int = MAX_BYTES) -> Fetcher:
     def fetch(url: str) -> FetchResult:
-        import requests
-        try:
-            with requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=timeout, stream=True) as r:
-                buf = b""
-                for chunk in r.iter_content(65536):
-                    buf += chunk
-                    if len(buf) >= max_bytes:
-                        buf = buf[:max_bytes]
-                        break
-                return FetchResult(r.status_code, r.headers.get("content-type", ""), buf)
-        except requests.RequestException as e:
-            raise OSError(type(e).__name__) from None
+        status, ctype, body = safe_get(url, timeout, max_bytes)
+        return FetchResult(status, ctype, body)
     return fetch
 
 

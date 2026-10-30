@@ -73,7 +73,9 @@ def _rephrase(stmt: str, lang: str, size: int = 5) -> str:
 
 def _write(lang: str):
     def respond(messages) -> dict:
-        m = re.search(r"<fact_sheet>\n(.*?)\n</fact_sheet>", messages[-1]["content"], re.S)
+        # the fact sheet is in the request message; a repair note may follow it as a later message
+        carrier = next((x["content"] for x in reversed(messages) if "<fact_sheet>" in x["content"]), messages[-1]["content"])
+        m = re.search(r"<fact_sheet>\n(.*?)\n</fact_sheet>", carrier, re.S)
         fs = json.loads(m.group(1)) if m else {"facts": [], "sources": []}
         facts, sources = fs["facts"], fs["sources"]
         marks = lambda f: "".join(f"[{i}]" for i in f["source_ids"])      # noqa: E731

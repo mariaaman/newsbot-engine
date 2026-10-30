@@ -316,7 +316,10 @@ def run_gates(a: dict, fs: FactSheet, lang: str, cfg, *, recent: list | None = N
         fail("duplicate_slug")
     if embedder is not None and others and "duplicate_title" not in r.failures:
         try:
-            vecs = embedder([a["title"] + ". " + a["summary"]] + [x["title"] for x in others[:q.recent_articles_checked]])
+            # compare like with like: title + summary on both sides (a bare title embeds differently from title + summary,
+            # which used to let a re-worded duplicate of a pending or published story slip through)
+            vecs = embedder([a["title"] + ". " + a["summary"]]
+                            + [x["title"] + (". " + x["summary"] if x.get("summary") else "") for x in others[:q.recent_articles_checked]])
             if any(cosine(vecs[0], v) >= q.duplicate_embedding_threshold for v in vecs[1:]):
                 fail("duplicate_embedding")
         except Exception as e:                     # an embedding outage must not block QA; title check still ran

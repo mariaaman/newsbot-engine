@@ -1,8 +1,19 @@
-{{- /* usage: partial "adslot.html" (dict "ctx" . "slot" "after_summary"); renders only when ads are on and the unit id is set */ -}}
+{{- /* usage: partial "adslot.html" (dict "ctx" . "slot" "after_summary"); renders only when ads are on and the slot is set.
+   adsense: slot = ad-unit id. adsterra: slot = the ad-unit HTML from the dashboard; with consent_required it waits inside a
+   <template> and is activated by consent.html after "accept". */ -}}
 {{- $d := site.Data.site -}}
 {{- $unit := index $d.ads.slots .slot -}}
 {{- if and (partial "adson.html" .ctx) $unit }}
 <aside class="ad" aria-label="{{ i18n "ad_label" }}"><small>{{ i18n "ad_label" }}</small>
+{{- if eq $d.ads.network "adsterra" }}
+{{- if $d.ads.consent_required }}
+<template class="ad-snippet">{{ $unit | safeHTML }}</template>
+{{- else }}
+{{ $unit | safeHTML }}
+{{- end }}
+</aside>
+{{- else }}
 <ins class="adsbygoogle" style="display:block" data-ad-client="ca-{{ $d.ads.publisher_id }}" data-ad-slot="{{ $unit }}" data-ad-format="auto" data-full-width-responsive="true"></ins>
 <script>(window.adsbygoogle=window.adsbygoogle||[]).push({});</script></aside>
+{{- end }}
 {{- end }}

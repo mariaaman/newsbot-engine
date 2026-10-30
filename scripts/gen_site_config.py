@@ -25,6 +25,28 @@ DEFAULT_CATEGORIES = ["bangladesh", "world", "politics", "economy", "technology"
 PUB_RE = re.compile(r"^(?:ca-)?(pub-\d{10,20})$")
 GOOGLE_CERT_ID = "f08c47fec0942fa0"   # VERIFY: Google's TAG ID in ads.txt lines (stable for years)
 SLOTS = ("after_summary", "mid_article", "end_article")
+NETWORKS = ("adsense", "adsterra")
+SCRIPT_URL_RE = re.compile(r"^https://[A-Za-z0-9.-]+(?::\d+)?(?:/[^\s\"'<>]*)?$")
+TXT_LINE_RE = re.compile(r"^[A-Za-z0-9.-]+\.[A-Za-z]{2,}, ?[A-Za-z0-9_.-]+, ?(?:DIRECT|RESELLER)(?:, ?[0-9a-fA-F]{6,32})?$")
+MAX_SNIPPET = 4000
+_PROTO_REL_SRC = re.compile(r"""(src\s*=\s*["'])//""", re.I)
+
+
+def _https(url: str) -> str:
+    """Ad networks hand out protocol-relative URLs (//host/x.js); the site is https only."""
+    url = url.strip()
+    return "https:" + url if url.startswith("//") else url
+
+
+def _ad_snippet(raw: str) -> str:
+    """An ad-unit snippet pasted from a network dashboard: http(s) only, no way to break out of its wrapper."""
+    snippet = _PROTO_REL_SRC.sub(r"\1https://", str(raw).strip())
+    low = snippet.lower()
+    if len(snippet) > MAX_SNIPPET or "</template" in low or "<!--" in snippet:
+        raise ValueError("an ads.slots snippet is too long or contains </template or an HTML comment")
+    if re.search(r"""src\s*=\s*["']http://""", low):
+        raise ValueError("ads.slots snippets must load scripts over https")
+    return snippet
 
 
 def load_site_cfg(brain: Path) -> dict:
@@ -38,12 +60,33 @@ def load_site_cfg(brain: Path) -> dict:
     disclosure = {**DEFAULT_DISCLOSURE, **(site.get("ai_disclosure") or {})}
     pub = str(ads.get("publisher_id") or "").strip()
     enabled = bool(ads.get("enabled"))
-    if enabled:
-        m = PUB_RE.match(pub)
-        if not m:
-            raise ValueError("ads.enabled is true but ads.publisher_id is missing or not like pub-1234567890123456")
-        pub = m.group(1)
-    slots = {k: str(v) for k, v in (ads.get("slots") or {}).items() if k in SLOTS and str(v).strip().isdigit()}
+    network = str(ads.get("network") or "adsense").strip().lower()
+    if network not in NETWORKS:
+        raise ValueError(f"ads.network must be one of {', '.join(NETWORKS)}")
+    scripts: list[str] = []
+    txt_lines: list[str] = []
+    if network == "adsense":
+        if enabled:
+            m = PUB_RE.match(pub)
+            if not m:
+                raise ValueError("ads.enabled is true but ads.publisher_id is missing or not like pub-1234567890123456")
+            pub = m.group(1)
+        slots = {k: str(v) for k, v in (ads.get("slots") or {}).items() if k in SLOTS and str(v).strip().isdigit()}
+    else:                                                  # adsterra (or any network that gives you script/snippet code)
+        pub = ""
+        for u in ads.get("scripts") or []:
+            u = _https(str(u))
+            if not SCRIPT_URL_RE.match(u):
+                raise ValueError("every ads.scripts entry must be an https URL")
+            scripts.append(u)
+        slots = {k: _ad_snippet(v) for k, v in (ads.get("slots") or {}).items() if k in SLOTS and str(v).strip()}
+        for line in ads.get("txt_lines") or []:
+            line = str(line).strip()
+            if not TXT_LINE_RE.match(line):
+                raise ValueError("ads.txt_lines entries look like: adsterra.com, 1234567, DIRECT, <id from your dashboard>")
+            txt_lines.append(line)
+        if enabled and not (scripts or slots):
+            raise ValueError("ads.enabled is true but ads.scripts and ads.slots are both empty: paste your ad code first")
     return {
         "name": str(site.get("name") or "TBD"),
         "base_url": str(site.get("base_url") or "https://example.pages.dev").rstrip("/") + "/",
@@ -51,8 +94,9 @@ def load_site_cfg(brain: Path) -> dict:
         "categories": list(site.get("categories") or DEFAULT_CATEGORIES),
         "bengali_font": bool(site.get("bengali_font", False)),
         "ai_disclosure": disclosure,
-        "ads": {"enabled": enabled, "publisher_id": pub if enabled else "",
-                "consent_required": bool(ads.get("consent_required", False)), "slots": slots},
+        "ads": {"enabled": enabled, "network": network, "publisher_id": pub if enabled else "",
+                "consent_required": bool(ads.get("consent_required", False)), "slots": slots,
+                "scripts": scripts if enabled else [], "txt_lines": txt_lines},
     }
 
 
@@ -60,6 +104,10 @@ def ads_txt(data: dict) -> str:
     ads = data["ads"]
     if not ads["enabled"]:
         return "# ads.txt: ads are disabled (ads.enabled=false in the brain config).\n"
+    if ads.get("network", "adsense") == "adsterra":
+        if not ads.get("txt_lines"):
+            return "# ads.txt: add the line(s) from your ad network dashboard to ads.txt_lines in the brain config.\n"
+        return "\n".join(ads["txt_lines"]) + "\n"
     return f"google.com, {ads['publisher_id']}, DIRECT, {GOOGLE_CERT_ID}\n"
 
 

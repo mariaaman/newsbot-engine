@@ -43,7 +43,8 @@ def brain_with(config_extra: str, tmp: Path) -> Path:
 def test_gen_reads_template_defaults():
     d = gen.load_site_cfg(TEMPLATE)
     assert d["languages"] == ["bn", "en"] and d["default"] == "bn"
-    assert d["ads"] == {"enabled": False, "publisher_id": "", "consent_required": False, "slots": {}}
+    assert d["ads"] == {"enabled": False, "network": "adsense", "publisher_id": "", "consent_required": True, "slots": {},
+                        "scripts": [], "txt_lines": []}
     assert d["ai_disclosure"] == gen.DEFAULT_DISCLOSURE and d["base_url"].endswith("/")
 
 
@@ -291,3 +292,74 @@ def test_static_files_for_pages_hosting():
     assert "404" in (SITE / "static/404.html").read_text(encoding="utf-8")     # root 404 (Pages would act as an SPA otherwise)
     assert "noindex" in (SITE / "static/404.html").read_text(encoding="utf-8")
     assert (SITE / "static/_headers").is_file() and (SITE / "assets/css/main.css").is_file()
+
+
+# ---------- ad network: adsterra (script URLs + ad-unit snippets from the dashboard) ----------
+ADSTERRA = """ads:
+  enabled: true
+  network: adsterra
+  consent_required: true
+  scripts: ["//pl000.example.com/abc/social.js"]
+  txt_lines: ["adsterra.com, 1234567, DIRECT, abcdef0123456789"]
+  slots:
+    mid_article: |
+      <script async data-cfasync="false" src="//pl000.example.com/abc/invoke.js"></script>
+      <div id="container-abc"></div>
+    bogus: "<b>dropped</b>"
+"""
+
+
+def _adsterra(extra=ADSTERRA):
+    with tempfile.TemporaryDirectory() as t:
+        return gen.load_site_cfg(brain_with(extra, Path(t)))
+
+
+def test_adsterra_config_is_cleaned_and_makes_its_own_ads_txt():
+    d = _adsterra()
+    ads = d["ads"]
+    assert ads["network"] == "adsterra" and ads["publisher_id"] == "" and ads["consent_required"] is True
+    assert ads["scripts"] == ["https://pl000.example.com/abc/social.js"]                  # protocol-relative -> https
+    assert set(ads["slots"]) == {"mid_article"}                                             # unknown slot dropped
+    assert 'src="https://pl000.example.com/abc/invoke.js"' in ads["slots"]["mid_article"]
+    assert gen.ads_txt(d) == "adsterra.com, 1234567, DIRECT, abcdef0123456789\n" and "google.com" not in gen.ads_txt(d)
+
+
+def test_adsterra_without_ad_code_or_with_unsafe_code_fails_loudly():
+    bad = ["ads: {enabled: true, network: adsterra}\n",
+           "ads: {enabled: true, network: adsterra, scripts: ['http://x.example/a.js']}\n",
+           "ads: {enabled: true, network: adsterra, scripts: ['https://x.example/a.js\"onload=1']}\n",
+           "ads: {enabled: true, network: adsterra, slots: {mid_article: '<div></template><script>x</script>'}}\n",
+           "ads: {enabled: true, network: adsterra, slots: {mid_article: '<script src=\"http://x.example/a.js\"></script>'}}\n",
+           "ads: {enabled: true, network: adsterra, scripts: ['https://x.example/a.js'], txt_lines: ['not a line']}\n",
+           "ads: {enabled: true, network: nope}\n"]
+    for extra in bad:
+        try:
+            _adsterra(extra)
+        except ValueError:
+            continue
+        raise AssertionError(f"accepted: {extra}")
+
+
+def test_adsterra_disabled_or_missing_txt_line_is_harmless():
+    d = _adsterra("ads: {enabled: false, network: adsterra, scripts: ['https://x.example/a.js']}\n")
+    assert d["ads"]["scripts"] == [] and gen.ads_txt(d).startswith("# ads.txt: ads are disabled")
+    d = _adsterra("ads: {enabled: true, network: adsterra, scripts: ['https://x.example/a.js']}\n")
+    assert gen.ads_txt(d).startswith("# ads.txt: add the line(s)") and "google.com" not in gen.ads_txt(d)
+
+
+def test_adsense_path_is_unchanged_next_to_adsterra():
+    d = _adsterra("ads: {enabled: true, publisher_id: 'pub-1234567890123456', slots: {mid_article: '42'}}\n")
+    assert d["ads"]["network"] == "adsense" and d["ads"]["scripts"] == [] and d["ads"]["slots"] == {"mid_article": "42"}
+    assert gen.ads_txt(d).startswith("google.com, pub-1234567890123456, DIRECT, ")
+
+
+def test_ad_templates_branch_on_network_and_gate_snippets_behind_consent():
+    head = (LAYOUTS / "partials/adhead.html").read_text(encoding="utf-8")
+    slot = (LAYOUTS / "partials/adslot.html").read_text(encoding="utf-8")
+    consent = (LAYOUTS / "partials/consent.html").read_text(encoding="utf-8")
+    for t in (head, slot, consent):
+        assert 'eq $d.ads.network "adsterra"' in t
+    assert "range $d.ads.scripts" in head and "adsbygoogle.js" in head                      # adsense script still there
+    assert '<template class="ad-snippet">' in slot and "safeHTML" in slot and "adsbygoogle" in slot
+    assert 'querySelectorAll("template.ad-snippet")' in consent and "n.async=false" in consent
+    assert "}}" not in consent.replace("}}", "", consent.count("{{"))                        # no stray JS braces read as template end

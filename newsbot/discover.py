@@ -3,7 +3,6 @@ Stdlib XML parsing, no extra dependency. Every fetch failure is tolerated and co
 from __future__ import annotations
 
 import logging
-import os
 import re
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
@@ -15,7 +14,7 @@ from typing import Callable
 from newsbot.models import Item, Trend, domain_of
 
 log = logging.getLogger("newsbot.discover")
-USER_AGENT = f"NewsBotEngine/0.1 (+{os.environ.get('NEWSBOT_CONTACT_URL', 'https://example.invalid/about')})"  # set NEWSBOT_CONTACT_URL to your site's about page
+MAX_FEED_BYTES = 5_000_000      # a feed bigger than this is cut (and then fails to parse): never read unbounded data
 
 Fetcher = Callable[[str], bytes]
 
@@ -121,12 +120,13 @@ def parse_trends(xml: bytes) -> list[Trend]:
 
 
 def http_fetcher(timeout: float = 8.0) -> Fetcher:
-    import requests  # imported lazily so offline modules need nothing
+    from newsbot.netsafe import safe_get
 
     def fetch(url: str) -> bytes:
-        r = requests.get(url, timeout=timeout, headers={"User-Agent": USER_AGENT})
-        r.raise_for_status()
-        return r.content
+        status, _ctype, body = safe_get(url, timeout, MAX_FEED_BYTES)
+        if status >= 400:
+            raise OSError(f"http_{status}")
+        return body
     return fetch
 
 

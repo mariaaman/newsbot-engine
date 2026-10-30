@@ -157,6 +157,7 @@ class QACfg(_Base):
     duplicate_title_similarity: float = Field(0.6, ge=0, le=1)       # Jaccard on title tokens
     duplicate_embedding_threshold: float = Field(0.9, ge=0, le=1)    # cosine, VERIFY per embedding model
     recent_articles_checked: int = Field(300, ge=1)
+    max_repair_attempts: int = Field(2, ge=0, le=3)         # rewrites after a failed gate (names, years, ages, length, citations...); 0 = off
     banned_phrases: list[str] = []                         # added to the built-in list in qa.py
 
 
@@ -176,9 +177,12 @@ class SensitiveCfg(_Base):
 
 class AdsCfg(_Base):
     enabled: bool = False
-    publisher_id: str = ""            # AdSense id, "pub-1234567890123456" (a "ca-" prefix is accepted)
-    consent_required: bool = False    # True: the consent banner gates loading the ad script (EU/UK visitors)
-    slots: dict[str, str] = {}        # optional AdSense ad-unit ids: after_summary, mid_article, end_article
+    network: Literal["adsense", "adsterra"] = "adsense"   # adsterra = any network that gives you script URLs / ad-unit code
+    publisher_id: str = ""            # AdSense only: "pub-1234567890123456" (a "ca-" prefix is accepted)
+    consent_required: bool = False    # True: the consent banner gates loading the ad scripts (EU/UK visitors)
+    slots: dict[str, str] = {}        # adsense: ad-unit ids; adsterra: ad-unit HTML snippets. Names: after_summary, mid_article, end_article
+    scripts: list[str] = []           # adsterra: site-wide script URLs (e.g. a Social Bar); https only
+    txt_lines: list[str] = []         # adsterra: lines for ads.txt from your dashboard, e.g. "adsterra.com, 1234567, DIRECT, <id>"
 
 
 class SourceFeed(_Base):

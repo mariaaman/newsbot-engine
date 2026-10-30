@@ -62,6 +62,8 @@ def run_pipeline(cfg: "Config", mode: str, brain: Path, now=None, embedder=None,
     milestones add publish (commit/PR/deploy) and story-state updates. Dry-run reads fixtures, uses the mock LLM and never touches state."""
     from newsbot.cluster import cluster_items
     from newsbot.discover import discover, fixture_fetcher, http_fetcher
+    from newsbot.netsafe import set_contact_from_config
+    set_contact_from_config(cfg)
     from newsbot.gate import decide
     from newsbot.models import utcnow
     from newsbot.score import score_all

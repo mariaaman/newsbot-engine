@@ -202,6 +202,22 @@ def estimate_write_tokens(fs: FactSheet, lang: str, cfg, brain, previous: dict |
     return estimate_tokens(build_messages(fs, lang, cfg, brain, previous), cfg.write.max_tokens)
 
 
+# Unambiguous synonyms a model uses for the site's category ids. A synonym is applied only when its target is one of the
+# site's own categories; anything else ("legal", "national" ...) still fails the category gate, so no taxonomy is guessed.
+CATEGORY_ALIASES = {
+    "business": "economy", "finance": "economy", "markets": "economy", "trade": "economy",
+    "sport": "sports", "tech": "technology", "climate": "environment",
+    "international": "world", "global": "world", "foreign": "world", "foreign affairs": "world", "world news": "world",
+    "government": "politics", "bangladesh news": "bangladesh",
+}
+
+
+def map_category(category: str, allowed) -> str:
+    c = (category or "").strip().lower()
+    alias = CATEGORY_ALIASES.get(c)
+    return alias if c not in set(allowed or ()) and alias in set(allowed or ()) else c
+
+
 def write_article(llm, brain, cfg, fs: FactSheet, lang: str, previous: dict | None = None, *,
                   fix: str | None = None) -> tuple[dict, int]:
     """Returns (normalised article dict, number of sanitiser removals).
@@ -211,7 +227,9 @@ def write_article(llm, brain, cfg, fs: FactSheet, lang: str, previous: dict | No
     if fix:
         msgs.append({"role": "user", "content": fix})
     raw = llm.complete(f"write_{lang}", msgs, schema=validate_article, max_tokens=cfg.write.max_tokens)
-    return normalise_article(raw, fs)
+    art, removed = normalise_article(raw, fs)
+    art["category"] = map_category(art["category"], getattr(getattr(cfg, "site", None), "categories", None))
+    return art, removed
 
 
 # ---------------- Markdown file with front matter (consumed by the Hugo theme in M5) ----------------

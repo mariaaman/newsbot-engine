@@ -59,10 +59,15 @@ def test_repair_cures_an_invented_name_once():
     assert "Zorblax" not in r.article["body_markdown"]
 
 
-def test_failed_repair_keeps_the_gate_closed_and_asks_only_once():
+def test_failed_repair_keeps_the_gate_closed_and_asks_at_most_max_repair_attempts_times():
     mock, calls = _mock("Zorblax Quimby opened the line [S1].", "Zorblax Quimby opened the line [S1].")
     r = _run(mock)
-    assert calls == [False, True] and "unsupported_name" in r.qa.failures and r.status == "pending"
+    assert calls == [False, True, True] and "unsupported_name" in r.qa.failures and r.status == "pending"   # 1 write + 2 repairs
+    off = make_cfg(qa={"max_repair_attempts": 0})
+    mock, calls = _mock("Zorblax Quimby opened the line [S1].")
+    llm = build_llm(load_llm_settings(TEMPLATE), None, dry_run=True, mock=mock)
+    r = produce_articles(STORIES["ev-metro"], ["en"], off, None, llm, recent_by_lang={"en": []})["en"]
+    assert calls == [False] and r.status == "pending"                                                       # repair switched off
 
 
 def test_offending_terms_lists_names_and_numbers():
