@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
 log = logging.getLogger("newsbot.llm")
+MAX_RETRY_TOKENS = 14000      # the most a cut-off answer is given on its second try
 
 
 class LLMError(Exception):
@@ -52,6 +53,7 @@ class Response:
     completion_tokens: int = 0
     model: str = ""
     provider: str = ""
+    finish_reason: str = ""      # "length" = the answer was cut off at max_tokens (reasoning models spend part of it thinking)
 
     @property
     def total_tokens(self) -> int:
@@ -156,7 +158,8 @@ class LLM:
     with keys should be registered). budget: Budget | None."""
 
     def __init__(self, settings: dict, providers: dict[str, Provider], budget=None,
-                 sleep: Callable[[float], None] = time.sleep, picker: PoolPicker | None = None):
+                 sleep: Callable[[float], None] = time.sleep, picker: PoolPicker | None = None,
+                 clock: Callable[[], float] = time.monotonic):
         self.tasks: dict[str, str] = settings.get("tasks", {})
         self.tiers: dict[str, list[dict]] = settings.get("tiers", {})
         r = settings.get("retry", {})
@@ -167,6 +170,20 @@ class LLM:
         self.budget = budget
         self._sleep = sleep
         self.picker = picker or PoolPicker(budget)
+        self._clock = clock
+        self.deadline: float | None = None
+
+    # ---- run time limit: the hourly job is killed at 30 minutes and then NOTHING is committed, so the run must end by itself ----
+    def set_deadline(self, at: float | None) -> None:
+        """`at` is a monotonic-clock time. Past it complete() raises BudgetExhausted: the story is queued for the next run and
+        the run still commits the work it has."""
+        self.deadline = at
+
+    def time_left(self) -> float:
+        return float("inf") if self.deadline is None else self.deadline - self._clock()
+
+    def has_time(self, seconds: float) -> bool:
+        return self.time_left() >= seconds
 
     def chain(self, task: str) -> list[tuple[str, str]]:
         if task not in self.tasks:
@@ -198,6 +215,8 @@ class LLM:
                 if attempt == retries:
                     raise ProviderError("rate limited after retries") from e
                 wait = min(e.retry_after if e.retry_after is not None else delay, self.max_delay)
+                if self.time_left() < wait + 45:                  # waiting would eat the time the run needs to commit its work
+                    raise BudgetExhausted("run time limit reached while rate limited") from e
                 log.warning("429 task=%s provider=%s attempt=%d wait=%.1fs", task, prov.name, attempt + 1, wait)
                 self._sleep(wait)
                 delay = min(delay * 2, self.max_delay)
@@ -210,6 +229,8 @@ class LLM:
         est = estimate_tokens(messages, max_tokens)
         last: Exception | None = None
         tried = False
+        if self.time_left() < 45:
+            raise BudgetExhausted(f"run time limit reached before task {task}")
         chain = self.chain(task)
         bad_models: set[str] = set()        # a model whose answer failed the schema twice is not retried on other accounts
         for pos, (pname, model) in enumerate(chain):
@@ -220,11 +241,12 @@ class LLM:
             tried = True
             prov = self.providers[pname]
             msgs = list(messages)
+            tokens_out = max_tokens                 # may grow once if the answer was cut off (see below)
             # another entry is waiting behind this one: give up on a 429 quickly and let it take over
             retries = self.max_retries if pos == len(chain) - 1 else min(1, self.max_retries)
             try:
                 for repair in (False, True):
-                    resp = self._call(prov, model, msgs, want_json, max_tokens, task, retries)
+                    resp = self._call(prov, model, msgs, want_json, tokens_out, task, retries)
                     self.picker.warm(pname)
                     if self.budget:
                         self.budget.record(pname, model, resp.total_tokens or est,
@@ -238,6 +260,17 @@ class LLM:
                         last = SchemaError(f"invalid output for task {task}: {type(e).__name__}")
                         if repair:
                             break
+                        if resp.finish_reason == "length":
+                            # Cut off at max_tokens (a reasoning model spends part of it thinking). Sending the broken answer
+                            # back would be cut off again, so ask the original question once more with more room.
+                            bigger = min(int(tokens_out * 1.8), MAX_RETRY_TOKENS)
+                            if bigger <= tokens_out:
+                                break
+                            log.warning("answer cut off task=%s provider=%s model=%s: asking again with more room", task, pname, model)
+                            tokens_out = bigger
+                            if self.budget and not self.budget.can_spend(pname, model, est, est_out=tokens_out):
+                                raise BudgetExhausted(task)
+                            continue
                         # one repair retry: show the model its own output plus the error class, not more
                         msgs = msgs + [{"role": "assistant", "content": resp.text},
                                        {"role": "user", "content": "Your reply was not valid for the required JSON "

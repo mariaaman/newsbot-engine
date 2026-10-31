@@ -53,6 +53,9 @@ class LimitsCfg(_Base):
     # organisations (in any language) cover it. same_language: the old rule (>= N trusted domains in that language).
     routing_mode: Literal["cross_language", "same_language"] = "cross_language"
     routing_min_orgs: int = Field(2, ge=1)
+    # Wall-clock limit for the engine step. The hourly job is killed at 30 minutes and then nothing is committed, so the run
+    # stops starting LLM work after this many minutes, queues what is left and commits the rest.
+    max_run_minutes: float = Field(22, ge=5, le=27)
     max_new_per_run: int = Field(1, ge=1)            # a full article costs minutes and many tokens; the rest wait for the next hour
     max_item_age_hours: float = Field(48, gt=0)       # feed items older than this are ignored
     max_items_per_feed: int = Field(40, ge=1)         # newest N per feed, so one big feed cannot crowd out the others

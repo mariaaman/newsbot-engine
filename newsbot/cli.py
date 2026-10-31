@@ -73,6 +73,8 @@ def run_pipeline(cfg: "Config", mode: str, brain: Path, now=None, embedder=None,
     from newsbot.score import score_all
     from newsbot.state import append_decisions, load_stories, local_day_start, new_today
 
+    import time as _time
+    run_started = _time.monotonic()
     log = logging.getLogger("newsbot.run")
     dry = mode == "dry-run"
     now = now or (DRY_RUN_NOW if dry else utcnow())     # dry-run lives on the fixtures' clock, or every sample story looks old
@@ -108,12 +110,16 @@ def run_pipeline(cfg: "Config", mode: str, brain: Path, now=None, embedder=None,
         llm = build_run_llm(brain, mode, state_dir, budget=shared_budget)
         if llm is None and report is not None:
             report.add("facts", "fail", "no LLM provider is usable (check the API keys)")
+    if llm is not None and hasattr(llm, "set_deadline"):
+        llm.set_deadline(run_started + cfg.limits.max_run_minutes * 60)      # rate-limit and slow-model waits must not eat the commit time
     expand = None
     if vectors and not dry:
         from newsbot.research import make_expander
         expand = make_expander(items, clusters, vectors, cfg)
     factsheets = gather_story_facts(decisions, scored, cfg, brain, mode, llm, article_fetcher, state_dir, now,
                                     expand=expand) if llm else {}
+    if report is not None and any("facts:run_time_limit" in d.reason or "queued_budget" in d.reason for d in decisions):
+        report.add("facts", "skip", "run time or LLM limit reached: the story is queued for the next run")
     articles = write_story_articles(decisions, factsheets, cfg, brain, mode, llm, embedder, now)
     if not dry and articles:
         from newsbot.publish import record_new_stories
@@ -177,6 +183,11 @@ def gather_story_facts(decisions, scored, cfg, brain: Path, mode: str, llm, arti
     cooldowns = {} if dry else load_cooldowns(state_dir)
     before = dict(cooldowns)
     for d in todo:
+        if hasattr(llm, "has_time") and not llm.has_time(120):          # out of run time: leave it for the next run
+            d.queued = True
+            d.reason = f"{d.reason}|facts:run_time_limit"
+            log.info("facts story=%s status=run_time_limit", d.story_id)
+            continue
         if cooldowns.get(d.story_id, now) > now:        # could not be verified recently: no fetch, no LLM
             d.reason = f"{d.reason}|facts:cooldown"
             log.info("facts story=%s status=cooldown", d.story_id)

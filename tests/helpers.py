@@ -23,7 +23,7 @@ DEFAULTS = {
     "limits": {"max_new_per_day": 24, "max_updates_per_story_per_day": 3,
                "min_hours_between_updates": 2, "min_independent_sources": 3,
                "max_sources_per_story": 5, "routing_min_domains_per_language": 2,
-               "max_items_per_run": 400, "stable_after_hours": 48, "closed_after_days": 7,
+               "max_items_per_run": 400, "max_run_minutes": 22, "stable_after_hours": 48, "closed_after_days": 7,
                "min_update_fact_words": 5, "insufficient_sources_cooldown_hours": 3},
     "publish": {"mode": "review"},
     "clustering": {"lexical_threshold": 0.2, "embedding_threshold": 0.78,

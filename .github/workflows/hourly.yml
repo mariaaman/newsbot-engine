@@ -66,6 +66,9 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: python -m newsbot run --mode "$MODE" --brain brain --report "$RUNNER_TEMP/run_report.json"
+      - name: Remove the LLM accounts file (it holds API tokens; no later step needs it)
+        if: always()
+        run: rm -f "${NEWSBOT_CF_ACCOUNTS_FILE:-/nonexistent}"
       - name: Commit to brain (state, drafts, content or review PR)
         id: commit
         if: env.MODE != 'dry-run'

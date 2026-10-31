@@ -122,6 +122,7 @@ def _repair(llm, brain, cfg, fs, lang, art, qa, recent, embedder, est, prev, now
     a rewrite is kept when it has no more failures than the draft before it. Returns (article, qa, attempts)."""
     best_art, best_qa, tried = art, qa, 0
     while (tried < cfg.qa.max_repair_attempts and best_qa.failures and set(best_qa.failures) <= REPAIRABLE
+           and (not hasattr(llm, "has_time") or llm.has_time(240))          # a rewrite takes minutes: never start one near the limit
            and llm.can_run(f"write_{lang}", est)):
         note = repair_note(best_qa.failures, best_art, fs, lang, cfg, best_qa)
         try:

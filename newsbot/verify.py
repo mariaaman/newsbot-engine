@@ -95,7 +95,9 @@ def build_fact_sheet(llm, brain, story_id: str, sources: list[Source], claims: l
                "claims": [{"id": c.id, "source": c.source_id, "kind": c.kind, "text": c.text} for c in claims]}
     msgs = [{"role": "system", "content": load_prompt(brain, "verify")},
             {"role": "user", "content": wrap_untrusted("claims_data", json.dumps(payload, ensure_ascii=False))}]
-    groups = llm.complete("verify", msgs, schema=validate_facts, max_tokens=5000)
+    # the answer lists every fact with its claim ids: it grows with the claims (7 sources x 30 claims needs far more than 5000
+    # tokens, and a reasoning model also spends some on thinking); a cut-off answer is invalid JSON and sank the whole story
+    groups = llm.complete("verify", msgs, schema=validate_facts, max_tokens=min(12000, 3000 + 40 * len(claims)))
     facts: list[Fact] = []
     used: set[str] = set()
     for g in groups:

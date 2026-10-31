@@ -94,7 +94,10 @@ class WorkersAIProvider:
         if text is None or not text.strip():
             raise ProviderError("empty reply")        # e.g. a reasoning model used every token on thinking
         u = (data.get("usage") or (data.get("result") or {}).get("usage") or {}) if isinstance(data, dict) else {}
-        return Response(text, u.get("prompt_tokens", 0), u.get("completion_tokens", 0), model, self.name)
+        fin = ""
+        if isinstance(data, dict) and isinstance(data.get("choices"), list) and data["choices"] and isinstance(data["choices"][0], dict):
+            fin = str(data["choices"][0].get("finish_reason") or "")
+        return Response(text, u.get("prompt_tokens", 0), u.get("completion_tokens", 0), model, self.name, fin)
 
     def list_models(self) -> list[str]:
         names: list[str] = []
