@@ -1,9 +1,0 @@
-<header class="site-header"><div class="wrap bar">
-<a class="brand" href="{{ site.Home.RelPermalink }}">{{ site.Data.site.name }}</a>
-{{- $alts := .Translations }}
-{{- if not $alts }}{{ $alts = slice }}{{ range site.Home.AllTranslations }}{{ if ne .Language.Lang site.Language.Lang }}{{ $alts = $alts | append . }}{{ end }}{{ end }}{{ end }}
-<span class="langs">{{ range $alts }}<a href="{{ .RelPermalink }}" hreflang="{{ .Language.Lang }}" lang="{{ .Language.Lang }}">{{ .Language.LanguageName }}</a>{{ end }}</span>
-</div>
-<nav class="wrap cats" aria-label="{{ i18n "categories" }}">
-{{- range site.Taxonomies.category.Alphabetical }}<a href="{{ .Page.RelPermalink }}">{{ partial "catname.html" .Name }}</a>{{ end -}}
-</nav></header>

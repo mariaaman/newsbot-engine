@@ -1,9 +1,0 @@
-# Cloudflare Pages headers. VERIFY the syntax in the current Pages docs. No CSP here: AdSense needs a tuned one.
-/*
-  X-Content-Type-Options: nosniff
-  Referrer-Policy: strict-origin-when-cross-origin
-  Permissions-Policy: camera=(), microphone=(), geolocation=()
-/css/*
-  Cache-Control: public, max-age=31536000, immutable
-/fonts/*
-  Cache-Control: public, max-age=31536000, immutable

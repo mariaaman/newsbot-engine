@@ -1,8 +1,0 @@
-{{- $d := site.Data.site -}}
-{{- $iso := "2006-01-02T15:04:05Z07:00" -}}
-{{- $ld := dict "@context" "https://schema.org" "@type" "NewsArticle" "headline" .Title "description" (.Params.summary | default "") "datePublished" (.Date.Format $iso) "dateModified" (.Lastmod.Format $iso) "inLanguage" site.Language.Lang "isAccessibleForFree" true "mainEntityOfPage" (dict "@type" "WebPage" "@id" .Permalink) "author" (dict "@type" "Organization" "name" $d.name "url" site.Home.Permalink) "publisher" (dict "@type" "Organization" "name" $d.name "url" site.Home.Permalink) -}}
-{{- with .Params.categories }}{{ $ld = merge $ld (dict "articleSection" (index . 0)) }}{{ end -}}
-{{- $cites := slice -}}
-{{- range .Params.sources }}{{ with .url }}{{ $cites = $cites | append . }}{{ end }}{{ end -}}
-{{- with $cites }}{{ $ld = merge $ld (dict "citation" .) }}{{ end -}}
-<script type="application/ld+json">{{ $ld | jsonify | safeJS }}</script>

@@ -1,4 +1,0 @@
-Hardening + auto-repair + Adsterra update (2026-10-30). Unzip at the ROOT of newsbot-engine (replace all). Then the BRAIN update in the brain repo.
-New: netsafe.py (crawler identity, per-hop redirect checks), symmetric duplicate check, category synonyms, repair loop (qa.max_repair_attempts, default 2),
-ads.network = adsterra (scripts / slots snippets / txt_lines), pending_triage.py, pin_actions.py + pin-actions workflow, many new tests.
-Docs: docs/GO_LIVE.md sections 7 and 8, docs/ADSTERRA.md.

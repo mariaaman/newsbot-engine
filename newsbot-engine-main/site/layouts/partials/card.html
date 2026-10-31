@@ -1,5 +1,0 @@
-<article class="card">
-<h3><a href="{{ .RelPermalink }}">{{ .Title }}</a></h3>
-<p class="meta">{{ with .Params.categories }}<span class="cat">{{ partial "catname.html" (index . 0) }}</span> · {{ end }}<time datetime="{{ .Date.Format "2006-01-02T15:04:05Z07:00" }}">{{ partial "fmtdate.html" .Date }}</time>{{ if gt (sub .Lastmod.Unix .Date.Unix) 3600 }} <span class="badge">{{ i18n "updated" }}</span>{{ end }}</p>
-{{ with .Params.summary }}<p>{{ . }}</p>{{ end }}
-</article>

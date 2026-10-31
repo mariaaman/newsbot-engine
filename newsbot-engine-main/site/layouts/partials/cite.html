@@ -1,2 +1,0 @@
-{{- /* Untrusted text: escape FIRST, then turn [S1] markers into anchor links to the sources list */ -}}
-{{- . | htmlEscape | replaceRE `\[(S\d+)\]` `<sup class="cite"><a href="#source-${1}">[${1}]</a></sup>` | safeHTML -}}
