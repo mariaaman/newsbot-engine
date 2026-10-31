@@ -23,7 +23,7 @@ async function route() {
   const my = ++token;
   const parts = (location.hash || "#/").replace(/^#\/?/, "").split("/").map((p) => { try { return decodeURIComponent(p); } catch { return p; } });
   const name = Object.prototype.hasOwnProperty.call(SCREENS, parts[0]) ? parts[0] : "";
-  setNav(name === "draft" ? "drafts" : name === "article" ? "articles" : name);
+  setNav(name === "draft" ? "drafts" : name === "article" ? "articles" : name === "llm" ? "keys" : name);
   view.replaceChildren(h("p", { class: "muted" }, "লোড হচ্ছে…"));
   try {
     const out = await SCREENS[name](parts.slice(1));
@@ -97,10 +97,12 @@ async function home() {
     out.push(h("div", { class: "card warn" }, "সিক্রেটের তালিকা পড়া যায়নি (GitHub টোকেনে Secrets পড়ার অনুমতি লাগে)।"));
   } else {
     const missing = REQUIRED_SECRETS.filter((n) => !o.secrets.includes(n));
+    if (!o.secrets.some((n) => n.startsWith("CFLLM_") && !n.startsWith("CFLLM_ID_"))) missing.push("LLM অ্যাকাউন্ট (কমপক্ষে ১টা)");
     out.push(h("div", { class: "card " + (missing.length ? "warn" : "ok") },
-      missing.length ? h("div", {}, h("h2", {}, "অনুপস্থিত সিক্রেট"), missing.map((n) => h("span", { class: "chip bad" }, n)), h("p", {}, h("a", { href: "#/keys" }, "কী ট্যাবে গিয়ে বসান")))
+      missing.length ? h("div", {}, h("h2", {}, "অনুপস্থিত সিক্রেট"), missing.map((n) => h("span", { class: "chip bad" }, n)), h("p", {}, h("a", { href: "#/keys" }, "কী ট্যাবে গিয়ে বসান"), " · ", h("a", { href: "#/llm" }, "LLM অ্যাকাউন্ট")))
         : h("div", {}, h("h2", {}, "সিক্রেট"), h("span", { class: "chip ok" }, "সব দরকারি সিক্রেট আছে")),
-      h("p", { class: "muted small" }, "আছে: "), o.secrets.map((n) => h("span", { class: "chip" }, n))));
+      h("p", { class: "muted small" }, "আছে: "), o.secrets.filter((n) => !n.startsWith("CFLLM_")).map((n) => h("span", { class: "chip" }, n)),
+      h("span", { class: "chip" }, `LLM অ্যাকাউন্ট ${o.secrets.filter((n) => n.startsWith("CFLLM_") && !n.startsWith("CFLLM_ID_")).length}টি`)));
   }
   return out;
 }
@@ -294,7 +296,7 @@ async function settings() {
   });
 
   // daily budgets
-  const budgetBox = ["tokens_per_day", "requests_per_day"].map((map) => {
+  const budgetBox = ["neurons_per_day", "tokens_per_day", "requests_per_day"].map((map) => {
     const entries = Object.entries(d.budget[map] || {});
     const rows = entries.map(([k, v]) => {
       const inp = h("input", { type: "number", step: "1", min: "0", value: v });
@@ -304,7 +306,7 @@ async function settings() {
     });
     const nk = h("input", { type: "text", placeholder: "provider/model" }), nv = h("input", { type: "number", step: "1", min: "0", placeholder: "সীমা" });
     const add = h("button", { class: "btn small", onclick: () => guard(add, () => applyNow({ kind: "budget", map, key: nk.value.trim(), value: Number(nv.value) }, "✅ যোগ হয়েছে")) }, "যোগ করুন");
-    return h("div", { class: "stack" }, h("h3", {}, map === "tokens_per_day" ? "দৈনিক টোকেন সীমা" : "দৈনিক রিকোয়েস্ট সীমা"), rows, h("div", { class: "row" }, h("div", { class: "grow" }, nk), h("div", { class: "grow" }, nv), add));
+    return h("div", { class: "stack" }, h("h3", {}, map === "neurons_per_day" ? "অ্যাকাউন্ট-ভিত্তিক দৈনিক neuron সীমা (কী: cf_নাম)" : map === "tokens_per_day" ? "দৈনিক টোকেন সীমা" : "দৈনিক রিকোয়েস্ট সীমা"), rows, h("div", { class: "row" }, h("div", { class: "grow" }, nk), h("div", { class: "grow" }, nv), add));
   });
 
   // task -> tier, embedding
@@ -393,7 +395,7 @@ async function keys() {
       val, out, h("div", { class: "row" }, test, save));
   });
 
-  const others = d.secrets.filter((s) => !known.has(s.name));
+  const others = d.secrets.filter((s) => !known.has(s.name) && !s.name.startsWith("CFLLM_"));
   const nn = h("input", { type: "text", placeholder: "NAME_IN_CAPITALS" }), nv = h("input", { type: "password", placeholder: "মান", autocomplete: "off" });
   const nsave = h("button", { class: "btn small primary", onclick: () => guard(nsave, async () => {
     const name = nn.value.trim().toUpperCase(); nn.value = name;
@@ -412,8 +414,106 @@ async function keys() {
     d.vars.map((v) => h("div", { class: "list-line" }, h("span", { class: "mono" }, v.name), " = ", h("span", { class: "mono" }, v.value))), lbl("নাম"), vn, lbl("মান"), vv, h("div", { class: "row" }, vsave));
 
   return [h("h1", {}, "কী ও সিক্রেট"),
+    h("a", { class: "card ok", href: "#/llm" }, h("strong", {}, "🤖 LLM অ্যাকাউন্ট পুল"), h("div", { class: "muted small" }, "Cloudflare অ্যাকাউন্ট যোগ, পরীক্ষা, ব্যবহার দেখা ও যাচাই — যতগুলো খুশি")),
     h("div", { class: "card alt" }, "সংরক্ষণের আগে কী-টা সত্যিই কাজ করে কি না পরীক্ষা হয়। মান GitHub-এর পাবলিক কী দিয়ে এনক্রিপ্ট হয়ে যায়; এই পাতা কোনো মান পড়তে বা দেখাতে পারে না।"),
     cards, customCard, varCard];
+}
+
+// ---------- LLM accounts (Cloudflare Workers AI pool) ----------
+const STEP_ICON = (ok) => (ok === true ? "✅" : ok === false ? "❌" : "⚠️");
+const stepsView = (res) => h("div", { class: "small" }, res.steps.map((st) => h("div", { class: "list-line" }, `${STEP_ICON(st.ok)} ${st.name}: ${st.detail}`)),
+  h("p", {}, res.ok === true ? "✅ সব পরীক্ষা পাস। যোগ করা যাবে।" : res.ok === false ? "❌ সমস্যা আছে, তাই যোগ করা যাবে না।" : "⚠️ পুরোপুরি নিশ্চিত হওয়া যায়নি।"));
+const neu = (n) => num(Math.round(n || 0));
+
+async function llm() {
+  const d = await api("/api/llm");
+  const t = d.totals;
+  const pctAll = t.capacity ? Math.min(100, Math.round((t.neurons / t.capacity) * 100)) : null;
+
+  // ---- summary + re-check ----
+  const checkBtn = h("button", { class: "btn primary", onclick: () => guard(checkBtn, checkAll) }, "🔍 এখনই সব যাচাই করুন");
+  const checkAll = async () => {
+    const before = d.health && d.health.checked_at;
+    await api("/api/llm/check", {});
+    toast("▶️ যাচাই শুরু হয়েছে (১–২ মিনিট)। ফল এখানেই আসবে।", "ok");
+    for (let i = 0; i < 24; i++) {                               // poll up to ~3 minutes
+      await new Promise((r) => setTimeout(r, 8000));
+      if (!location.hash.startsWith("#/llm")) return;
+      const n = await api("/api/llm");
+      if (n.health && n.health.checked_at !== before) { toast("✅ যাচাই শেষ", "ok"); await route(); return; }
+      if (n.check && n.check.status === "completed" && n.check.conclusion === "failure" && !(n.health && n.health.checked_at !== before)) { await route(); toast("যাচাই চলেছে, কিন্তু ফল জমা পড়েনি। রান-তালিকা দেখুন।", "bad"); return; }
+    }
+    toast("এখনো ফল আসেনি। কিছুক্ষণ পর রিফ্রেশ করুন।", "bad");
+  };
+  const summary = h("div", { class: "card" }, h("h2", {}, "আজকের অবস্থা"),
+    h("div", { class: "muted small" }, `হিসাবের দিন (UTC): ${d.day === d.today ? d.today : `${d.today} · আজ এখনো কোনো ব্যবহার নেই`}`),
+    h("p", {}, `${num(t.accounts)}টি অ্যাকাউন্ট · ${neu(t.neurons)} neuron ব্যবহার${t.capacity ? ` / ${num(t.capacity)} (থামার সীমা ${Math.round(d.stop * 100)}%)` : ""} · ${num(t.requests)} রিকোয়েস্ট · ${num(t.failures)} ব্যর্থ`),
+    pctAll === null ? null : h("progress", { value: pctAll, max: 100 }),
+    d.health ? h("div", { class: "muted small" }, `শেষ যাচাই ${ago(d.health.checked_at)} · ${d.health.summary.ok}/${d.health.summary.accounts} অ্যাকাউন্ট ঠিক`) : h("div", { class: "muted small" }, "এখনো যাচাই চালানো হয়নি"),
+    d.check && d.check.status !== "completed" ? h("span", { class: "chip warn" }, "যাচাই চলছে") : null,
+    h("div", { class: "small" }, "ব্যবহৃত মডেল: ", d.models.map((m) => h("span", { class: "chip mono" }, m)), d.embedding ? h("span", { class: "chip mono" }, d.embedding) : null),
+    h("div", { class: "row" }, checkBtn));
+
+  // ---- accounts ----
+  const cards = d.accounts.map((a) => {
+    const hl = a.health;
+    const state = !a.complete ? h("span", { class: "chip bad" }, "অসম্পূর্ণ (আবার যোগ করুন)")
+      : !hl ? h("span", { class: "chip warn" }, "যাচাই হয়নি") : hl.ok ? h("span", { class: "chip ok" }, "ঠিক আছে") : h("span", { class: "chip bad" }, "সমস্যা আছে");
+    const rm = h("button", { class: "btn small", onclick: () => guard(rm, async () => {
+      if (!confirm(`${a.label} পুল থেকে মুছবেন? এর টোকেনও GitHub থেকে মুছে যাবে।`)) return;
+      await api("/api/llm/remove", { label: a.label }); toast("🗑 মুছে গেছে", "ok"); await route();
+    }) }, "মুছুন");
+    const probs = hl ? Object.entries(hl.models || {}).filter(([, v]) => v.status !== "OK").map(([m, v]) => `${m}: ${v.status}${v.reason ? " (" + v.reason + ")" : ""}`)
+      .concat(hl.auth && hl.auth !== "ok" ? [`টোকেন: ${hl.auth}`] : [], hl.embedding && hl.embedding.status !== "OK" ? [`embedding: ${hl.embedding.status}${hl.embedding.reason ? " (" + hl.embedding.reason + ")" : ""}`] : []) : [];
+    return h("div", { class: "card" },
+      h("div", { class: "row between" }, h("strong", {}, a.label), state),
+      h("div", { class: "muted small mono" }, `${a.hint || "—"} · ${a.provider}`),
+      a.usage.pct === null ? null : h("progress", { value: Math.min(a.usage.pct, 100), max: 100 }),
+      h("div", { class: "small" }, `${neu(a.usage.neurons)} neuron${a.usage.pct === null ? "" : ` (${a.usage.pct}%)`} · ${num(a.usage.requests)} রিকোয়েস্ট · ${num(a.usage.tokens)} টোকেন · ${num(a.usage.failures)} ব্যর্থ`),
+      a.usage.models.map((m) => h("div", { class: "list-line small" }, h("span", { class: "mono" }, m.model), ` — ${num(m.requests)} রিকোয়েস্ট · ${neu(m.neurons)} neuron${m.failures ? ` · ${m.failures} ব্যর্থ` : ""}`)),
+      a.error ? h("div", { class: "small" }, `⚠️ শেষ ত্রুটি: ${a.error.reason} · ${ago(a.error.at)}`) : null,
+      probs.length ? h("div", { class: "small" }, probs.map((x) => h("div", {}, "❌ " + x))) : null,
+      hl ? h("div", { class: "muted small" }, hl.ok ? `✅ সব মডেল উত্তর দিয়েছে` : "শেষ যাচাইয়ে সমস্যা ধরা পড়েছে") : null,
+      h("div", { class: "row" }, rm));
+  });
+
+  // ---- add ----
+  const label = h("input", { type: "text", placeholder: "যেমন PHONE1 (খালি রাখলে নিজে নাম দেবে)", autocomplete: "off" });
+  const acct = h("input", { type: "text", placeholder: "Account ID (৩২ অক্ষর)", autocomplete: "off" });
+  const tok = h("input", { type: "password", placeholder: "API Token", autocomplete: "off" });
+  const out = h("div", {});
+  const body = (extra) => ({ label: label.value, account_id: acct.value.trim(), token: tok.value.trim(), ...extra });
+  const testBtn = h("button", { class: "btn small", onclick: () => guard(testBtn, async () => {
+    if (!acct.value.trim() || !tok.value.trim()) { toast("Account ID আর Token দুটোই লিখুন", "bad"); return; }
+    out.replaceChildren(h("p", { class: "muted" }, "পরীক্ষা চলছে… (১০–৩০ সেকেন্ড)"));
+    out.replaceChildren(stepsView(await api("/api/llm/test", body({}))));
+  }) }, "🧪 শুধু পরীক্ষা");
+  const addBtn = h("button", { class: "btn small primary", onclick: () => guard(addBtn, () => { if (!acct.value.trim() || !tok.value.trim()) { toast("Account ID আর Token দুটোই লিখুন", "bad"); return Promise.resolve(); } return doAdd({}); }) }, "➕ পরীক্ষা করে যোগ করুন");
+  async function doAdd(extra) {
+    out.replaceChildren(h("p", { class: "muted" }, "পরীক্ষা চলছে… (১০–৩০ সেকেন্ড)"));
+    try {
+      const r = await api("/api/llm/add", body(extra));
+      tok.value = ""; acct.value = ""; label.value = "";                    // the typed token never stays on the page
+      toast(`✅ ${r.label} ${r.status === "created" ? "যোগ হয়েছে" : "হালনাগাদ হয়েছে"}`, "ok");
+      await route();
+    } catch (e) {
+      out.replaceChildren(e instanceof ApiError && e.data && e.data.test ? h("div", {}, h("p", { class: "small" }, e.message), stepsView(e.data.test)) : errorCard(e));
+      if (e instanceof ApiError && e.status === 422 && e.data && e.data.needsForce && confirm("পুরোপুরি নিশ্চিত হওয়া যায়নি। তবুও যোগ করবেন?")) return doAdd({ ...extra, force: true });
+      if (e instanceof ApiError && e.status === 409 && /already used/.test(e.message) && confirm(`${e.message}\n\nএই নামের টোকেন বদলে দেবেন?`)) return doAdd({ ...extra, replace: true });
+    }
+  }
+  const add = h("div", { class: "card alt" }, h("h2", {}, "নতুন অ্যাকাউন্ট যোগ"),
+    h("p", { class: "muted small" }, "সংরক্ষণের আগে সার্ভার নিজে পরীক্ষা করে: টোকেন ঠিক কিনা, Workers AI-এর অনুমতি আছে কিনা, কনফিগের প্রতিটি মডেল এই অ্যাকাউন্টে মেলে কিনা, আর প্রতিটি মডেল সত্যিই উত্তর দেয় কিনা। একটা পরীক্ষাও ফেল করলে সংরক্ষণ হয় না।"),
+    lbl("নাম (ঐচ্ছিক)"), label, lbl("Account ID"), acct, lbl("API Token"), tok, h("div", { class: "row" }, testBtn, addBtn), out);
+
+  const help = h("div", { class: "card alt" }, h("h2", {}, "Cloudflare থেকে কী আনবেন"),
+    h("ol", { class: "small" },
+      h("li", {}, "dash.cloudflare.com-এ ওই অ্যাকাউন্টে ঢুকুন। ডান পাশের বা Workers & Pages-এর পাতায় “Account ID” (৩২ অক্ষর) কপি করুন।"),
+      h("li", {}, "My Profile → API Tokens → Create Token → “Workers AI” টেমপ্লেট (Use template) → Continue → Create Token। টোকেনটা শুধু এই একবারই দেখায়, কপি করুন।"),
+      h("li", {}, "এখানে Account ID আর Token বসিয়ে “পরীক্ষা করে যোগ করুন” চাপুন। প্রতিটি অ্যাকাউন্টে এভাবে আলাদা টোকেন বানাবেন।")),
+    h("p", { class: "muted small" }, "ফ্রি অ্যাকাউন্টে দিনে ১০,০০০ neuron মেলে (মধ্যরাত UTC-তে রিসেট)। সব অ্যাকাউন্ট সমানভাবে ব্যবহার হয়: যেটার কম খরচ হয়েছে সেটা আগে, সমান হলে পালা করে। একটা ফুরোলে বা ব্যর্থ হলে পরেরটা কাজ নেয়। সীমা বদলাতে: সেটিংস → মডেল ও বাজেট। GitHub নিজে একটা রিপোজিটরিতে সর্বোচ্চ ১০০টা সিক্রেট রাখতে দেয়, তাই বাস্তবে সীমা সেই পর্যন্ত।"));
+
+  return [h("h1", {}, "LLM অ্যাকাউন্ট পুল"), summary, cards.length ? cards : h("div", { class: "card warn" }, "এখনো কোনো অ্যাকাউন্ট যোগ করা হয়নি।"), add, help];
 }
 
 // ---------- runs ----------
@@ -498,6 +598,6 @@ async function more() {
       au.items.length ? au.items.slice(0, 40).map((x) => h("div", { class: "list-line" }, h("strong", {}, x.action), x.detail ? ` — ${x.detail}` : "", h("div", { class: "muted small" }, `${fmtTime(x.t)} · ${x.ip}`))) : h("p", { class: "muted" }, "কিছু নেই।"))];
 }
 
-const SCREENS = { "": home, drafts, articles, settings, keys, runs, more, draft: draftScreen, article: articleScreen };
+const SCREENS = { "": home, drafts, articles, settings, keys, llm, runs, more, draft: draftScreen, article: articleScreen };
 window.addEventListener("hashchange", () => route());
 route();

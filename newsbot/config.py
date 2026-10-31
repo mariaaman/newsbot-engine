@@ -3,7 +3,7 @@ nothing here is hard-coded policy. Anything external is marked # VERIFY in the Y
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -112,16 +112,17 @@ class ScoringCfg(_Base):
 
 
 class LLMBudget(_Base):
-    groq_tokens_per_day: int = Field(180000, ge=0)  # VERIFY free-tier limit (spec starter key)
-    groq_requests_per_day: int = Field(900, ge=0)   # VERIFY
     stop_fraction: float = Field(0.9, gt=0, le=1)
+    neurons_per_day_per_account: int = Field(10000, ge=0)   # Cloudflare free allowance of EACH account (VERIFY); 0 = no limit
+    neurons_per_day: dict[str, int] = {}            # per-account override, key = cf_<label>
     tokens_per_day: dict[str, int] = {}             # "provider" or "provider/model"
     requests_per_day: dict[str, int] = {}
 
 
 class TierEntry(_Base):
-    provider: Literal["groq", "workers_ai", "gemini", "openrouter", "mock"]
+    provider: Literal["workers_ai", "mock"]         # workers_ai = the pool of ALL Cloudflare accounts
     model: str
+
 
 
 class RetryCfg(_Base):
@@ -137,6 +138,8 @@ class LLMCfg(_Base):
     tiers: dict[str, list[TierEntry]] = {}
     embedding: TierEntry | None = None
     retry: RetryCfg = RetryCfg()
+    neuron_rates: dict[str, dict[str, float]] = {}  # model -> {in, out}: neurons per million tokens ("default" = unknown models)
+    model_params: dict[str, dict[str, Any]] = {}    # model -> extra request fields, e.g. {reasoning_effort: low}
 
     @model_validator(mode="after")
     def _tasks_have_tiers(self) -> "LLMCfg":

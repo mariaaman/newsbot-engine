@@ -9,16 +9,16 @@ Do these once, in order. Nothing here needs a computer after step 8: approving a
 
 ## 2. Accounts and tokens
 - **Cloudflare**: note the Account ID. Create an API token with *Account / Cloudflare Pages / Edit* and *Account / Workers AI / Read* (the same token serves deploys and embeddings).
-- **Groq**: create an API key. Optional: a Gemini API key.
+- **LLM accounts**: no key to create now. After the dashboard is up, add your Cloudflare accounts on the *LLM* page (see docs/LLM_PROVIDERS.md). Until then the deploy account above is used as a single-account fallback.
 - **GitHub**: create a fine-grained token limited to the **brain repo only** with *Contents: read and write* and *Pull requests: read and write*.
 - **Telegram** (optional but recommended: every step result and every review request arrives in one chat). In Telegram open **@BotFather**, send `/newbot`, choose a name and a username, and copy the token it gives you. Open your new bot and press **Start** (or add it to a group). To find the chat ID, send the bot any message, then open `https://api.telegram.org/bot<TOKEN>/getUpdates` in your browser (use your own token; do not share that address) and copy the number after `"chat":{"id":`. A group's ID starts with `-`.
 
 ## 3. Engine repo secrets and variables (Settings, Secrets and variables, Actions)
-Secrets: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `GROQ_API_KEY`, `BRAIN_REPO_TOKEN`, optional `GEMINI_API_KEY`, and for Telegram `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (set both or neither).
+Secrets: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `BRAIN_REPO_TOKEN`, and for Telegram `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (set both or neither).
 Variables: `BRAIN_REPO` (`owner/newsbot-brain`), `PAGES_PROJECT` (e.g. `newsbot`), `PUBLISH_MODE` (`review`).
 
 ## 4. Run `setup` (Actions tab, setup, Run workflow)
-Every line must read `OK` (a `SKIP` for the optional Gemini key or for Telegram is fine). With the Telegram secrets set, it also sends a test message to your chat: `OK telegram test message reached the chat` means it arrived; a FAIL there usually means you have not pressed Start on the bot or the chat ID is wrong. It creates the Pages project when it is missing, checks the brain token and structure, Cloudflare, Workers AI, and the configured Groq/Workers AI model IDs. If a model ID FAILs, fix it in the brain's `config/llm.yaml` (IDs are a `VERIFY` item) and run `setup` again.
+Every line must read `OK` (a `SKIP` for Telegram is fine). With the Telegram secrets set, it also sends a test message to your chat: `OK telegram test message reached the chat` means it arrived; a FAIL there usually means you have not pressed Start on the bot or the chat ID is wrong. It creates the Pages project when it is missing, checks the brain token and structure, Cloudflare, Workers AI, and the configured Groq/Workers AI model IDs. If a model ID FAILs, fix it in the brain's `config/llm.yaml` (IDs are a `VERIFY` item) and run `setup` again.
 
 ## 5. Fill in the site
 Replace every `[OWNER: ...]` in the trust pages by adding overrides under the brain's `content/<lang>/pages/` (see `docs/SITE.md`). Set `site.name` and `site.base_url` to your Pages URL or custom domain.

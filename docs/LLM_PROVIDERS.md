@@ -1,22 +1,42 @@
-# LLM providers: OpenRouter, Gemini, Groq, Workers AI
+# LLM: Cloudflare Workers AI account pool
 
-Chains live in the brain repo (`config/llm.yaml`); a provider is used only if its secret exists.
+The only LLM provider is **Cloudflare Workers AI**. Any number of Cloudflare accounts can be added (nothing in the code
+limits the count; GitHub itself allows about 100 secrets per repository). All accounts form one pool and are used
+**equally**: the account that has used the smaller share of today's allowance goes first, accounts on the same level
+take turns. When an account reaches 90% of its daily allowance, answers 429, or fails, the next account takes over.
+When every account is used up the existing queue keeps the stories and the next run (after 00:00 UTC) continues.
 
-| Secret (repo Settings > Secrets > Actions) | Provider | Notes |
-|---|---|---|
-| `OPENROUTER_API_KEY` | OpenRouter | no card. Free `:free` models: ~20 requests/min, ~50/day (1,000/day after a one-time $10 credit; then raise `requests_per_day.openrouter`). In openrouter.ai > Settings > Privacy allow free endpoints, otherwise free models answer 404. |
-| `GEMINI_API_KEY` | Google Gemini | key from aistudio.google.com. `gemini-2.5-*` was shut down in October 2026: use `gemini-3.5-flash` / `gemini-3.1-flash-lite`. |
-| `GROQ_API_KEY` | Groq | free tier: 8,000 tokens/minute, 200,000/day. |
-| `CLOUDFLARE_*` | Workers AI | embeddings (multilingual clustering) + last fallback. 10,000 neurons/day. |
+## What to bring from each Cloudflare account
+1. **Account ID**: dash.cloudflare.com, open the account, copy the 32-character *Account ID*.
+2. **API token**: My Profile, API Tokens, Create Token, template **Workers AI**, Create Token. It is shown once. The token needs
+   nothing else (no Pages, no DNS): a leaked LLM token can only spend that account's free allowance.
+3. In the dashboard open **কী → LLM অ্যাকাউন্ট পুল**, enter name (optional), Account ID, token, press **পরীক্ষা করে যোগ করুন**.
 
-## Which one works? Run the live test
-Actions > **setup** > Run workflow. The last step, "Live test", sends two small probes to every configured model:
-```
-llmtest provider=openrouter model=openai/gpt-oss-120b:free probe=tiny status=OK tokens=...
-llmtest provider=gemini model=gemini-3.5-flash probe=realistic status=FAIL reason=status_404
-llmtest hint provider=gemini ids=gemini-3.5-flash,...        (real model IDs to copy into llm.yaml)
-llmtest summary working=3 failed=1 skipped=0
-```
-`status_401/403` = bad key or blocked region/account; `status_404` = unknown or retired model ID (see the hint line, or
-the OpenRouter privacy setting); `status_429` = limit reached; `reason=…json_validate_failed` = the model cannot do JSON mode.
-Only provider, model ID, probe name, status and token counts are logged, never keys, prompts or answers.
+## What is checked before anything is saved (server side, every time)
+format of id and token; token accepted and Workers AI visible; every model used in `config/llm.yaml` is offered to
+that account; one tiny real call per model and one embedding call answer. One failed step means nothing is saved.
+"Could not tell" (Cloudflare unreachable, or the allowance of the day is already spent) is saved only after you confirm.
+The same Cloudflare account added twice, or the same name twice, is refused.
+
+## How accounts are stored and reach the engine
+Dashboard: secret `CFLLM_<NAME>` = `{"a": "<account id>", "t": "<token>"}` (write-only at GitHub, nobody can read it back) and a
+variable `CFLLM_ID_<NAME>` = the account id (used for the list, the duplicate check and the masked display).
+Workflows: one step, `scripts/collect_llm_accounts.py`, receives the secrets context, keeps only `CFLLM_*`, writes an
+owner-only file and exports only its **path** (`NEWSBOT_CF_ACCOUNTS_FILE`). Without any account the deploy account
+(`CLOUDFLARE_*`) is used as a single-account fallback; once a dashboard account exists the deploy account is not used for LLM work.
+
+## What the dashboard shows
+Per account: neurons used today and % of the daily limit, requests, tokens, failures, the last error, and per model the same.
+Totals for the pool. **এখনই যাচাই** starts workflow `llm-check`, which re-tests every account and stores
+`state/llm_health.json` (labels and status words only). The probes are tiny and are not added to the usage numbers.
+
+## Model per task (config/llm.yaml, editable in the dashboard settings)
+`extract`, `qa_check`: tier *small* (gpt-oss-20b, then gpt-oss-120b). `verify`, `write_bn`, `write_en`: tier *strong* (gpt-oss-120b).
+An answer that fails the JSON schema twice moves to the next **different** model in the chain. `model_params` can lower the
+thinking effort of reasoning models (thinking tokens are billed as output); a model that rejects a field is asked again without it.
+Every model ID, rate and limit in that file is marked `VERIFY`: Cloudflare changes them. `neuron_rates` is neurons per million
+tokens (dollars per million tokens / 0.000011); unknown models are counted at the dearest `default` rate so the allowance is never under-counted.
+
+## Commands
+`python -m newsbot health` (model IDs on every account), `llmtest` (realistic calls, costs more), `llmcheck` (tiny calls, writes the
+report the dashboard shows). Exit code 3 means a problem.

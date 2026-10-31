@@ -500,9 +500,10 @@ def test_readme_setup_steps_mirror_first_run():
     assert [n for n, _ in steps] == [str(i) for i in range(1, 11)]
     assert steps == _steps("docs/FIRST_RUN.md")                       # same numbers and titles
     first, readme = (ROOT / "docs" / "FIRST_RUN.md").read_text(encoding="utf-8"), (ROOT / "README.md").read_text(encoding="utf-8")
-    for name in ("CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "GROQ_API_KEY", "BRAIN_REPO_TOKEN", "GEMINI_API_KEY",
+    for name in ("CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "BRAIN_REPO_TOKEN",
                  "BRAIN_REPO", "PAGES_PROJECT", "PUBLISH_MODE"):
         assert name in first and name in readme, name
+    assert not any(old in first + readme for old in ("GROQ_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY"))     # removed providers
     for link in re.findall(r"\]\((docs/[\w.]+\.md)\)", readme):
         assert (ROOT / link).is_file(), link
 

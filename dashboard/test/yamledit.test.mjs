@@ -14,8 +14,8 @@ test("reads block scalars, flow maps, flow lists, quoted keys and list-item maps
   assert.deepEqual(get(NEWS, ["site", "languages"]), ["bn", "en"]);
   assert.equal(typeof get(NEWS, ["scoring", "weights", "velocity"]), "number");
   assert.equal(typeof get(NEWS, ["qa", "min_words", "bn"]), "number");
-  assert.equal(get(LLM, ["llm", "tiers", "strong", 0, "provider"]), "groq");
-  assert.ok(Object.keys(flatten(LLM)).some((k) => k.startsWith("llm.budget.tokens_per_day.groq/")));      // quoted key with slash and dots
+  assert.equal(get(LLM, ["llm", "tiers", "strong", 0, "provider"]), "workers_ai");
+  assert.ok(Object.keys(flatten(LLM)).some((k) => k.startsWith("llm.neuron_rates.@cf/openai/gpt-oss-120b.")));      // quoted key with slash and dots
   assert.ok(get(NEWS, ["sensitive", "keywords", "death"]).includes("died"));
 });
 
@@ -57,23 +57,23 @@ test("missing keys are inserted into an existing block or an empty flow map; unk
 });
 
 test("llm chains: change a model, insert and remove an entry", () => {
-  const a = set(LLM, ["llm", "tiers", "strong", 1, "model"], "openai/gpt-oss-120b-v2");
-  assert.equal(get(a, ["llm", "tiers", "strong", 1, "model"]), "openai/gpt-oss-120b-v2");
-  assert.equal(get(a, ["llm", "tiers", "strong", 0, "model"]), get(LLM, ["llm", "tiers", "strong", 0, "model"]));
-  const n = Object.keys(flatten(LLM)).filter((k) => /^llm\.tiers\.strong\.\d+\.provider$/.test(k)).length;
-  const b = listInsert(LLM, ["llm", "tiers", "strong"], 1, { provider: "openrouter", model: "x/y:free" });
-  assert.equal(get(b, ["llm", "tiers", "strong", 1, "provider"]), "openrouter");
-  assert.equal(get(b, ["llm", "tiers", "strong", 2, "provider"]), get(LLM, ["llm", "tiers", "strong", 1, "provider"]));
-  const c = listRemove(b, ["llm", "tiers", "strong"], 1);
+  const a = set(LLM, ["llm", "tiers", "small", 1, "model"], "openai/gpt-oss-120b-v2");
+  assert.equal(get(a, ["llm", "tiers", "small", 1, "model"]), "openai/gpt-oss-120b-v2");
+  assert.equal(get(a, ["llm", "tiers", "small", 0, "model"]), get(LLM, ["llm", "tiers", "small", 0, "model"]));
+  const n = Object.keys(flatten(LLM)).filter((k) => /^llm\.tiers\.small\.\d+\.provider$/.test(k)).length;
+  const b = listInsert(LLM, ["llm", "tiers", "small"], 1, { provider: "workers_ai", model: "@cf/x/y" });
+  assert.equal(get(b, ["llm", "tiers", "small", 1, "model"]), "@cf/x/y");
+  assert.equal(get(b, ["llm", "tiers", "small", 2, "provider"]), get(LLM, ["llm", "tiers", "small", 1, "provider"]));
+  const c = listRemove(b, ["llm", "tiers", "small"], 1);
   assert.equal(c, LLM);
-  assert.equal(Object.keys(flatten(c)).filter((k) => /^llm\.tiers\.strong\.\d+\.provider$/.test(k)).length, n);
-  const one = "llm:\n  tiers:\n    small:\n      - {provider: groq, model: m}\n";
+  assert.equal(Object.keys(flatten(c)).filter((k) => /^llm\.tiers\.small\.\d+\.provider$/.test(k)).length, n);
+  const one = "llm:\n  tiers:\n    small:\n      - {provider: workers_ai, model: m}\n";
   assert.throws(() => listRemove(one, ["llm", "tiers", "small"], 0), /at least one/);
 });
 
 test("quoted keys with dots and slashes can be edited and removed", () => {
-  const key = Object.keys(flatten(LLM)).find((k) => k.includes("groq/openai/gpt-oss-120b"));
-  const path = ["llm", "budget", "tokens_per_day", "groq/openai/gpt-oss-120b"];
+  const key = Object.keys(flatten(LLM)).find((k) => k.includes("neuron_rates.@cf/openai/gpt-oss-120b.in"));
+  const path = ["llm", "neuron_rates", "@cf/openai/gpt-oss-120b", "in"];
   assert.ok(key);
   const a = set(LLM, path, 123456);
   assert.equal(get(a, path), 123456);

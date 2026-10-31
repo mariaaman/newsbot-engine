@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from newsbot.llm.base import LLMError
+from newsbot.llm.base import LLMError, expand_pool
 
 log = logging.getLogger("newsbot.llm.health")
 
@@ -22,8 +22,11 @@ def check_models(settings: dict, providers: dict, strict: bool = True) -> list[d
     emb = settings.get("embedding")
     if emb:
         entries.append(("embedding", emb))
+    expanded = []                              # a pool entry ("workers_ai") is checked on EVERY account behind it
     for tier, e in entries:
-        pname, model = e["provider"], e["model"]
+        names = expand_pool(providers, e["provider"]) or [e["provider"]]
+        expanded += [(tier, n, e["model"]) for n in names]
+    for tier, pname, model in expanded:
         prov = providers.get(pname)
         if prov is None:
             results.append({"provider": pname, "model": model, "tier": tier, "status": "SKIP"})

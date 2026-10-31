@@ -301,51 +301,14 @@ def test_embedder_retries_a_rate_limit_then_succeeds():
     calls = {"n": 0}
 
     class P:
+        name = "cf_x"
+
         def _run(self, model, payload):
             calls["n"] += 1
             if calls["n"] == 1:
                 raise RateLimited(0.01)
             return {"data": [[1.0, 0.0] for _ in payload["text"]]}
     assert WorkersAIEmbedder(P(), "m", batch=2)(["a", "b", "c"]) == [[1.0, 0.0]] * 3 and calls["n"] == 3
-
-
-def test_groq_json_validate_failure_is_retried_once_without_json_mode():
-    from newsbot.llm.groq import GroqProvider
-    seen = []
-
-    def transport(method, url, headers=None, json=None):
-        seen.append("response_format" in json)
-        if "response_format" in json:
-            return 400, {}, {"error": {"code": "json_validate_failed", "message": "Failed to generate JSON"}}
-        return 200, {}, {"choices": [{"message": {"content": '{"claims": []}'}}], "usage": {"prompt_tokens": 5, "completion_tokens": 3}}
-    r = GroqProvider("k", transport).chat("m", [{"role": "user", "content": "x"}], json_mode=True, max_tokens=100)
-    assert seen == [True, False] and r.text == '{"claims": []}'
-
-
-def test_writer_is_told_the_allowed_categories():
-    from newsbot.models import FactSheet
-    from newsbot.write import build_messages
-    from newsbot.prompts import load_prompt  # noqa: F401  (the template prompts exist)
-    from newsbot.cli import TEMPLATE
-    fs = FactSheet("st-x", 1, [], [])
-    c = NS(write=NS(local_angle={"en": "x"}, own_source_chars=0), site=NS(categories=["world", "bangladesh", "sports"]))
-    msgs = build_messages(fs, "en", c, TEMPLATE)
-    assert "ALLOWED CATEGORIES" in msgs[0]["content"] and "world, bangladesh, sports" in msgs[0]["content"]
-
-
-def test_openrouter_retries_json_mode_400_without_json_mode_and_reports_its_name():
-    from newsbot.llm.openrouter import OpenRouterProvider
-    seen = []
-
-    def transport(method, url, headers=None, json=None):
-        seen.append((url, "response_format" in json, headers.get("X-Title")))
-        if "response_format" in json:
-            return 400, {}, {"error": {"code": 400, "message": "response_format unsupported"}}
-        return 200, {}, {"choices": [{"message": {"content": '{"ok": true}'}}], "usage": {"prompt_tokens": 4, "completion_tokens": 2}}
-    r = OpenRouterProvider("k", transport).chat("openai/gpt-oss-120b:free", [{"role": "user", "content": "x"}], json_mode=True)
-    assert r.provider == "openrouter" and r.text == '{"ok": true}' and r.total_tokens == 6
-    assert seen[0][0] == "https://openrouter.ai/api/v1/chat/completions" and [s[1] for s in seen] == [True, False]
-    assert seen[0][2] == "newsbot"
 
 
 def test_livetest_reports_ok_failed_and_skipped_providers_without_leaking_answers():

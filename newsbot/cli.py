@@ -32,12 +32,16 @@ def build_parser() -> argparse.ArgumentParser:
                      help="write the step-by-step run report (JSON) here, for the notify step")
     val = sub.add_parser("validate", help="validate the brain config and exit")
     val.add_argument("--brain", default=os.environ.get("NEWSBOT_BRAIN_DIR", "brain"))
-    h = sub.add_parser("health", help="verify configured LLM model IDs against the providers (needs keys)")
+    h = sub.add_parser("health", help="verify configured LLM model IDs on every Cloudflare account (needs the account secrets)")
     h.add_argument("--brain", default=os.environ.get("NEWSBOT_BRAIN_DIR", "brain"))
     h.add_argument("--log-level", default="INFO")
     lt = sub.add_parser("llmtest", help="live test: which configured LLM providers really answer (needs keys)")
     lt.add_argument("--brain", default=os.environ.get("NEWSBOT_BRAIN_DIR", "brain"))
     lt.add_argument("--log-level", default="INFO")
+    lc = sub.add_parser("llmcheck", help="check every Cloudflare LLM account (token, models, one tiny call); writes a JSON report")
+    lc.add_argument("--brain", default=os.environ.get("NEWSBOT_BRAIN_DIR", "brain"))
+    lc.add_argument("--out", default=None, help="where to write the report (default <brain>/state/llm_health.json)")
+    lc.add_argument("--log-level", default="INFO")
     dn = sub.add_parser("deploy-needed", help="print deploy=true|false (site content/config changed since last deploy)")
     dn.add_argument("--brain", default=os.environ.get("NEWSBOT_BRAIN_DIR", "brain"))
     md = sub.add_parser("mark-deployed", help="record the content fingerprint after a successful deploy")
@@ -74,9 +78,12 @@ def run_pipeline(cfg: "Config", mode: str, brain: Path, now=None, embedder=None,
     now = now or (DRY_RUN_NOW if dry else utcnow())     # dry-run lives on the fixtures' clock, or every sample story looks old
     effective = mode          # the CLI/workflow mode wins; publish.mode in config is only the default for the workflow
     log.info("run start mode=%s sources=%d", effective, len(cfg.sources))
+    shared_budget = None
     if embedder is None and not dry:   # Workers AI multilingual embeddings when credentials exist
-        from newsbot.llm import build_embedder, load_llm_settings
-        embedder = build_embedder(load_llm_settings(brain))
+        from newsbot.llm import budget_from_settings, build_embedder, load_llm_settings
+        llm_settings = load_llm_settings(brain)
+        shared_budget = budget_from_settings(llm_settings, brain / "state")     # ONE budget object: embeddings and chat count together
+        embedder = build_embedder(llm_settings, budget=shared_budget)
     fetch = feed_fetcher or (fixture_fetcher(FIXTURES / "feeds", cfg.sources) if dry else http_fetcher())
     items, trends, stats = discover(cfg, fetch, now)
     state_dir = brain / "state"
@@ -98,7 +105,7 @@ def run_pipeline(cfg: "Config", mode: str, brain: Path, now=None, embedder=None,
         append_decisions(state_dir, now, [d.log_dict() for d in decisions])
     todo = [d for d in decisions if d.action in ("NEW", "UPDATE") and not d.queued]
     if todo and llm is None:
-        llm = build_run_llm(brain, mode, state_dir)
+        llm = build_run_llm(brain, mode, state_dir, budget=shared_budget)
         if llm is None and report is not None:
             report.add("facts", "fail", "no LLM provider is usable (check the API keys)")
     expand = None
@@ -126,7 +133,7 @@ def run_pipeline(cfg: "Config", mode: str, brain: Path, now=None, embedder=None,
             "updates": updates, "report": report, **n}
 
 
-def build_run_llm(brain: Path, mode: str, state_dir):
+def build_run_llm(brain: Path, mode: str, state_dir, budget=None):
     """Real LLM (keys from env) or the dry-run mock; None when no provider chain is usable."""
     from newsbot.llm import LLMError, build_llm, load_llm_settings
     log = logging.getLogger("newsbot.facts")
@@ -136,7 +143,7 @@ def build_run_llm(brain: Path, mode: str, state_dir):
             settings = load_llm_settings(brain) or load_llm_settings(TEMPLATE)   # dry-run works with no brain
             llm = build_llm(settings, None, dry_run=True, mock=dry_run_provider())
         else:
-            llm = build_llm(load_llm_settings(brain), state_dir)
+            llm = build_llm(load_llm_settings(brain), state_dir, budget=budget)
         llm.chain("extract")
         llm.chain("verify")
         return llm
@@ -219,7 +226,7 @@ def llmtest_cmd(brain: Path) -> int:
     provs = build_providers()
     res = run_livetest(load_llm_settings(brain), provs)
     emb = load_llm_settings(brain).get("embedding")
-    if emb and emb.get("provider") == "workers_ai" and "workers_ai" in provs:
+    if emb and emb.get("provider") == "workers_ai" and provs:
         from newsbot.llm import build_embedder
         try:
             ok = len(build_embedder(load_llm_settings(brain), provs)(["test"])) == 1
@@ -227,6 +234,25 @@ def llmtest_cmd(brain: Path) -> int:
         except Exception as e:                               # the daily allowance spent shows up here
             logging.getLogger("newsbot.llmtest").info("llmtest embedding model=%s status=FAIL reason=%s", emb["model"], type(e).__name__)
     return 0 if res["ok"] else 3
+
+
+def llmcheck_cmd(brain: Path, out: str | None = None) -> int:
+    """Exit 0 when every account passes, 3 otherwise (also when there is no account at all). The report is always written."""
+    from newsbot.llm import build_providers, load_llm_settings
+    from newsbot.llm.accountcheck import run_account_check, write_report
+    log = logging.getLogger("newsbot.llmcheck")
+    report = run_account_check(load_llm_settings(brain), build_providers())
+    write_report(report, out or (brain / "state" / "llm_health.json"))
+    for label, a in sorted(report["accounts"].items()):
+        bad = [f"{m}={v['status']}" + (f"({v['reason']})" if v.get("reason") else "") for m, v in a["models"].items() if v["status"] != "OK"]
+        if a["embedding"] and a["embedding"]["status"] != "OK":
+            bad.append(f"embedding={a['embedding']['status']}")
+        log.info("llmcheck account=%s status=%s auth=%s", label, "OK" if a["ok"] else "FAIL", a["auth"])
+        for b in bad:
+            log.info("llmcheck account=%s problem=%s", label, b)
+    s = report["summary"]
+    log.info("llmcheck summary accounts=%d ok=%d failed=%d", s["accounts"], s["ok"], s["failed"])
+    return 0 if s["accounts"] and not s["failed"] else 3
 
 
 def health_cmd(brain: Path) -> int:
@@ -278,6 +304,8 @@ def _main(argv: list[str] | None = None) -> int:
         return health_cmd(brain)
     if args.cmd == "llmtest":
         return llmtest_cmd(brain)
+    if args.cmd == "llmcheck":
+        return llmcheck_cmd(brain, args.out)
     if args.cmd in ("deploy-needed", "mark-deployed"):      # no config or pydantic needed
         from newsbot import publish
         if args.cmd == "deploy-needed":

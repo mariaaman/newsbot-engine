@@ -14,6 +14,7 @@ from tests.helpers import ROOT
 WF_DIR = ROOT / ".github" / "workflows"
 FILES = sorted(WF_DIR.glob("*.yml"))
 SECRET_NAME = re.compile(r"(TOKEN|KEY|SECRET|PASSWORD)", re.I)
+COLLECT_ENV = "ALL_SECRETS_JSON"
 TAG = re.compile(r"^v\d+(\.\d+){0,2}$")
 SHA = re.compile(r"^[0-9a-f]{40}$")
 HARDCODED = re.compile(r"(ghp_[A-Za-z0-9]{20,}|github_pat_\w{20,}|gsk_\w{20,}|AIza[\w-]{20,}|cfut_\w{20,})")
@@ -79,6 +80,9 @@ def test_secrets_only_through_secrets_context_and_never_echoed():
         wf = load(f)
         for s in steps(wf):
             for k, v in (s.get("env") or {}).items():
+                if k == COLLECT_ENV:                      # the ONE exception: the step that collects the dashboard's LLM accounts
+                    assert v == "${{ toJSON(secrets) }}" and s.get("run") == "python scripts/collect_llm_accounts.py" and s.get("name") == "Collect LLM accounts", (f.name, k)
+                    continue
                 if SECRET_NAME.search(k):
                     assert re.fullmatch(r"\$\{\{ secrets\.[A-Z_]+ \}\}", str(v)), (f.name, k)
             for k, v in (s.get("with") or {}).items():
@@ -122,8 +126,7 @@ def test_hourly_secrets_are_scoped_to_the_steps_that_need_them():
     assert not any(SECRET_NAME.search(k) for k in wf["jobs"]["run"]["env"])      # no secrets at job level
     for s in steps(wf):
         env = s.get("env") or {}
-        if "GROQ_API_KEY" in env:
-            assert "-m newsbot run" in s["run"]
+        assert not any(k in env for k in ("GROQ_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY"))
         if "CLOUDFLARE_API_TOKEN" in env and "wrangler" not in s.get("run", ""):
             assert "-m newsbot run" in s["run"]
 
@@ -262,3 +265,23 @@ def test_brain_commit_rebases_when_main_moved():
         assert r.returncode == 0 and r.stdout.split() == ["committed"], r.stderr
         files = set(_git(origin, "ls-tree", "-r", "--name-only", "main").split())
         assert {"content/en/owner.md", "content/en/a.md", "state/stories.jsonl"} <= files
+
+
+def test_llm_accounts_are_collected_once_before_every_step_that_calls_the_llm_and_never_exported_as_values():
+    for name in ("hourly.yml", "setup.yml", "readiness.yml", "llm-check.yml"):
+        st = steps(load(WF_DIR / name))
+        collect = next(i for i, s in enumerate(st) if s.get("id") == "llm_accounts")
+        users = [i for i, s in enumerate(st) if any(c in s.get("run", "") for c in ("-m newsbot run", "-m newsbot health", "-m newsbot llmtest", "-m newsbot llmcheck", "setup_check.py"))]
+        assert users and all(collect < i for i in users), name
+        assert sum(1 for s in st if "ALL_SECRETS_JSON" in (s.get("env") or {})) == 1, name          # the whole secrets context reaches ONE step only
+    text = (ROOT / "scripts" / "collect_llm_accounts.py").read_text(encoding="utf-8")
+    assert "NEWSBOT_CF_ACCOUNTS_FILE=" in text and "NEWSBOT_CF_ACCOUNTS=" not in text             # a file path goes to later steps, never the values
+
+
+def test_llm_check_workflow_saves_its_result_to_the_brain_and_fails_when_an_account_fails():
+    wf = load(WF_DIR / "llm-check.yml")
+    st = steps(wf)
+    assert wf["on"] == {"workflow_dispatch": None} or "workflow_dispatch" in wf["on"]
+    assert any("brain_commit.sh brain state" in s.get("run", "") and s.get("if") == "always()" for s in st)
+    assert next(s for s in st if s.get("id") == "check").get("continue-on-error") is True
+    assert any('test "$CHECK_OUTCOME" = "success"' in s.get("run", "") for s in st)

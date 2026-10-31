@@ -21,7 +21,7 @@
 
 ## Honest limits
 - **Independence**: outlets that republish the same wire story (Reuters/AP/AFP/Xinhua) still look independent. State-controlled media are tier 3 in the shipped lists (discovery only, never fetched).
-- **Token budget**: a rich article costs roughly 60-100k tokens (many sources, Bengali/Hindi/Japanese text is token-heavy). On free tiers expect **about 2-5 full articles per day**. Add `GEMINI_API_KEY` (optional fallback in llm.yaml) or lower `max_sources_per_story` / `source_chars` to trade depth for volume.
+- **Token budget**: a rich article costs roughly 60-100k tokens (many sources, Bengali/Hindi/Japanese text is token-heavy). Every free Cloudflare account gives 10,000 neurons a day; measure real use per account on the dashboard LLM page and **add more accounts** (no limit in the code) or lower `max_sources_per_story` / `source_chars` to trade depth for volume.
 - Detail is limited by the fact sheet: the engine never lets the writer add facts. More sources and facts = richer article; thin sources = a shorter article (it is better short than invented).
 - No live web search: "research" means more of the feed pool plus deeper reading, not Google search (Google News links are redirects that cannot be read reliably).
 - Output stays **bn + en**. More output languages (hi, ur, ar ...) are a later step: the writer already falls back to `prompts/write_default.md`, but each new output language also needs Hugo i18n, trust pages, QA limits and a `write_<lang>` task in llm.yaml.

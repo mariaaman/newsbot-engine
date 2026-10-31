@@ -9,8 +9,6 @@ from newsbot.llm import (LLM, Budget, BudgetExhausted, HealthCheckError, MockPro
                          RateLimited, SchemaError, build_embedder, build_llm, check_models,
                          load_llm_settings)
 from newsbot.llm.base import Response, parse_json
-from newsbot.llm.gemini import GeminiProvider
-from newsbot.llm.groq import GroqProvider
 from newsbot.llm.workers_ai import WorkersAIEmbedder, WorkersAIProvider
 
 TEMPLATE = Path(__file__).resolve().parent.parent / "brain-template"
@@ -67,7 +65,7 @@ def test_budget_persists_and_rolls_over_at_day_change():
         b = Budget(p, token_limits={"groq": 1000}, now_fn=lambda: t[0])
         b.record("groq", "m1", 400)
         b2 = Budget(p, token_limits={"groq": 1000}, now_fn=lambda: t[0])
-        assert b2.counters["groq/m1"] == {"tokens": 400, "requests": 1}
+        assert b2.counters["groq/m1"]["tokens"] == 400 and b2.counters["groq/m1"]["requests"] == 1
         assert not b2.can_spend("groq", "m1", 600)             # 400+600 > 900
         t[0] += timedelta(days=1)
         assert b2.can_spend("groq", "m1", 600) and b2.counters == {}
@@ -108,7 +106,7 @@ def test_429_gives_up_after_max_retries_and_falls_through_chain():
     s = settings(tiers={"small": [{"provider": "flaky", "model": "m"}, {"provider": "mock", "model": "m2"}]})
     llm = LLM(s, {"flaky": flaky, "mock": MockProvider({"extract": {"from": "mock"}})}, sleep=sleeps.append)
     assert llm.complete("extract", MSG, schema=lambda x: x) == {"from": "mock"}
-    assert flaky.n == 4 and len(sleeps) == 3                   # 1 try + 3 retries
+    assert flaky.n == 2 and len(sleeps) == 1                   # another entry is waiting: 1 try + 1 quick retry, then it takes over
     only = LLM(settings(tiers={"small": [{"provider": "flaky", "model": "m"}]}),
                {"flaky": Flaky([RateLimited(1)] * 10)}, sleep=lambda s: None)
     try:
@@ -209,49 +207,71 @@ def fake_transport(status=200, headers=None, body=None, record=None):
     return t
 
 
-def test_groq_parses_response_sends_json_mode_and_key_header_only():
+CHAT_OK = {"choices": [{"message": {"content": '{"ok": 1}'}}], "usage": {"prompt_tokens": 5, "completion_tokens": 3}}
+
+
+def test_workers_ai_chat_uses_the_openai_endpoint_of_ITS_account_and_sends_the_token_only_in_the_header():
     rec = []
-    body = {"choices": [{"message": {"content": '{"a":1}'}}], "usage": {"prompt_tokens": 5, "completion_tokens": 7}}
-    g = GroqProvider("gsk_TESTKEY123456", fake_transport(body=body, record=rec))
-    r = g.chat("openai/gpt-oss-20b", MSG, json_mode=True, max_tokens=50)
-    assert r.text == '{"a":1}' and r.total_tokens == 12
-    assert rec[0]["json"]["response_format"] == {"type": "json_object"} and rec[0]["json"]["model"] == "openai/gpt-oss-20b"
-    assert "gsk_" not in rec[0]["url"]
+    p = WorkersAIProvider("a" * 32, "tok-secret-123456", fake_transport(body=CHAT_OK, record=rec), name="cf_p1")
+    r = p.chat("@cf/openai/gpt-oss-120b", MSG, json_mode=True, max_tokens=300)
+    assert r.text == '{"ok": 1}' and r.prompt_tokens == 5 and r.completion_tokens == 3 and r.provider == "cf_p1"
+    call = rec[0]
+    assert call["url"] == "https://api.cloudflare.com/client/v4/accounts/" + "a" * 32 + "/ai/v1/chat/completions"
+    assert call["headers"]["Authorization"] == "Bearer tok-secret-123456" and "tok-secret" not in call["url"] and "tok-secret" not in str(call["json"])
+    assert call["json"]["model"] == "@cf/openai/gpt-oss-120b" and call["json"]["max_tokens"] == 300 and call["json"]["response_format"] == {"type": "json_object"}
 
 
-def test_groq_429_reads_retry_after_and_4xx_is_not_retryable():
+def test_workers_ai_understands_older_and_responses_style_answers_and_refuses_an_empty_one():
+    native = {"success": True, "result": {"response": "hello", "usage": {"prompt_tokens": 1, "completion_tokens": 1}}}
+    assert WorkersAIProvider("a", "t" * 10, fake_transport(body=native)).chat("m", MSG).text == "hello"
+    as_json = {"success": True, "result": {"response": {"k": 1}}}
+    assert json.loads(WorkersAIProvider("a", "t" * 10, fake_transport(body=as_json)).chat("m", MSG).text) == {"k": 1}
+    responses = {"output": [{"type": "reasoning", "content": [{"text": "thinking"}]}, {"type": "message", "content": [{"type": "output_text", "text": "answer"}]}]}
+    assert WorkersAIProvider("a", "t" * 10, fake_transport(body=responses)).chat("m", MSG).text == "answer"
+    empty = {"choices": [{"message": {"content": None, "reasoning_content": "all tokens spent thinking"}}]}
     try:
-        GroqProvider("k" * 10, fake_transport(429, {"retry-after": "7"})).chat("m", MSG)
-        assert False
-    except RateLimited as e:
-        assert e.retry_after == 7.0
-    try:
-        GroqProvider("k" * 10, fake_transport(401)).chat("m", MSG)
+        WorkersAIProvider("a", "t" * 10, fake_transport(body=empty)).chat("m", MSG)
         assert False
     except ProviderError as e:
-        assert "401" in str(e)
+        assert "empty" in str(e)
+
+
+def test_workers_ai_asks_again_without_an_optional_field_the_model_rejects_and_remembers_it():
+    seen = []
+
+    def t(method, url, *, headers=None, json=None, timeout=60):
+        seen.append(sorted(k for k in json if k in ("reasoning_effort", "response_format")))
+        if "reasoning_effort" in json or "response_format" in json:
+            return 400, {}, {"success": False}
+        return 200, {}, CHAT_OK
+    p = WorkersAIProvider("a", "t" * 10, t, model_params={"m": {"reasoning_effort": "low"}})
+    assert p.chat("m", MSG, json_mode=True).text == '{"ok": 1}'
+    assert seen == [["reasoning_effort", "response_format"], ["response_format"], []]       # params dropped first, then json mode
+    seen.clear()
+    p.chat("m", MSG, json_mode=True)
+    assert seen == [[]]                                                                    # remembered: no wasted calls any more
+
+
+def test_workers_ai_429_reads_retry_after_and_other_4xx_is_not_retryable_and_5xx_is():
     try:
-        GroqProvider("k" * 10, fake_transport(503)).chat("m", MSG)
+        WorkersAIProvider("a", "t" * 10, fake_transport(429, {"retry-after": "7"})).chat("m", MSG)
         assert False
-    except RateLimited:
-        pass                                                   # 5xx treated as transient
+    except RateLimited as e:
+        assert e.retry_after == 7
+    for status, exc in ((401, ProviderError), (503, RateLimited)):
+        try:
+            WorkersAIProvider("a", "t" * 10, fake_transport(status)).chat("m", MSG)
+            assert False
+        except exc as e:
+            assert not (status == 401 and isinstance(e, RateLimited))
 
 
-def test_groq_and_gemini_list_models():
-    g = GroqProvider("k" * 10, fake_transport(body={"data": [{"id": "a"}, {"id": "b"}]}))
-    assert g.list_models() == ["a", "b"]
-    gm = GeminiProvider("k" * 10, fake_transport(body={"models": [{"name": "models/gemini-x"}]}))
-    assert gm.list_models() == ["gemini-x"]
-
-
-def test_gemini_keeps_key_out_of_url_and_maps_roles():
-    rec = []
-    body = {"candidates": [{"content": {"parts": [{"text": "hi"}]}}], "usageMetadata": {"promptTokenCount": 3, "candidatesTokenCount": 1}}
-    g = GeminiProvider("AIza-secret-key", fake_transport(body=body, record=rec))
-    r = g.chat("gemini-x", MSG + [{"role": "assistant", "content": "a"}], json_mode=True)
-    assert r.text == "hi" and r.total_tokens == 4
-    assert "AIza" not in rec[0]["url"] and rec[0]["headers"]["x-goog-api-key"] == "AIza-secret-key"
-    assert rec[0]["json"]["contents"][-1]["role"] == "model" and "systemInstruction" in rec[0]["json"]
+def test_workers_ai_list_models_pages_through_the_catalogue():
+    def t(method, url, *, headers=None, json=None, timeout=60):
+        page = int(url.rsplit("page=", 1)[1])
+        names = [{"name": f"m{page}-{i}"} for i in range(100 if page == 1 else 3)]
+        return 200, {}, {"success": True, "result": names}
+    assert len(WorkersAIProvider("a", "t" * 10, t).list_models()) == 103
 
 
 def test_workers_ai_chat_and_embedder_batches():
@@ -318,8 +338,11 @@ def test_health_error_when_models_endpoint_unreachable():
 def test_template_llm_yaml_is_consistent():
     s = load_llm_settings(TEMPLATE)
     assert set(s["tasks"].values()) <= set(s["tiers"])
-    assert s["tiers"]["small"][0]["provider"] == "groq" and s["embedding"]["provider"] == "workers_ai"
-    assert s["budget"]["stop_fraction"] == 0.9 and s["budget"]["tokens_per_day"]["groq/openai/gpt-oss-120b"] == 180000
+    assert s["tiers"]["small"][0]["provider"] == "workers_ai" and s["embedding"]["provider"] == "workers_ai"
+    assert all(e["provider"] == "workers_ai" for tier in s["tiers"].values() for e in tier)          # one pool, no other provider
+    assert s["budget"]["stop_fraction"] == 0.9 and s["budget"]["neurons_per_day_per_account"] == 10000
+    assert s["neuron_rates"]["@cf/openai/gpt-oss-120b"]["out"] > s["neuron_rates"]["@cf/openai/gpt-oss-20b"]["out"] and "default" in s["neuron_rates"]
+    assert {e["model"] for tier in s["tiers"].values() for e in tier} <= set(s["neuron_rates"])        # every model used has a price
     assert all(e["model"] for tier in s["tiers"].values() for e in tier)
 
 
@@ -331,22 +354,27 @@ def test_build_llm_dry_run_uses_mock_and_no_state():
     assert build_embedder(s, providers={}) is None             # no Cloudflare creds -> lexical fallback
 
 
-def test_build_llm_real_chain_skips_providers_without_keys():
+def _pool_mock(label, answer=None):
+    m = MockProvider(answer or {"extract": {"ok": 1}})
+    m.name, m.pool = "cf_" + label, "workers_ai"
+    return m
+
+
+def test_build_llm_real_chain_uses_every_account_of_the_pool():
     s = load_llm_settings(TEMPLATE)
     with tempfile.TemporaryDirectory() as d:
-        mock_groq = MockProvider({"extract": {"ok": 1}})
-        mock_groq.name = "groq"
-        llm = build_llm(s, d, providers={"groq": mock_groq})
-        assert [p for p, _ in llm.chain("extract")] == ["groq"]
+        a, b = _pool_mock("a"), _pool_mock("b")
+        llm = build_llm(s, d, providers={"cf_a": a, "cf_b": b})
+        assert {p for p, _ in llm.chain("extract")} == {"cf_a", "cf_b"}
         llm.complete("extract", MSG, schema=lambda x: x)
         usage = json.loads((Path(d) / "usage.json").read_text())
-        assert "groq/openai/gpt-oss-20b" in usage["counters"]
+        assert any(k.endswith("/@cf/openai/gpt-oss-20b") for k in usage["counters"])
 
 
 def test_health_cmd_fails_loudly_without_keys():
     from newsbot.cli import health_cmd
     import os
-    saved = {k: os.environ.pop(k, None) for k in ("GROQ_API_KEY", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "GEMINI_API_KEY")}
+    saved = {k: os.environ.pop(k, None) for k in ("NEWSBOT_CF_ACCOUNTS_FILE", "NEWSBOT_CF_ACCOUNTS", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID")}
     try:
         assert health_cmd(TEMPLATE) == 3
     finally:

@@ -18,7 +18,8 @@ def test_template_loads_with_spec_defaults():
     assert cfg.ads.enabled is False
     assert {s.lang for s in cfg.sources} == {"bn", "en"}
     assert set(cfg.llm.tasks.values()) <= set(cfg.llm.tiers) and cfg.llm.embedding.provider == "workers_ai"
-    assert cfg.llm.budget.tokens_per_day["groq/openai/gpt-oss-120b"] == 180000
+    assert cfg.llm.budget.neurons_per_day_per_account == 10000 and "default" in cfg.llm.neuron_rates
+    assert all(e.provider == "workers_ai" for tier in cfg.llm.tiers.values() for e in tier)
 
 
 def test_missing_config_dir_raises(tmp_path):

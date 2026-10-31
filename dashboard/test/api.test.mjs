@@ -86,8 +86,8 @@ test("overview: counts, mode, site check, runs, usage and the secret names (neve
   assert.deepEqual(o.counts, { pending: { bn: 1, en: 2 }, published: { bn: 0, en: 1 } });
   assert.equal(o.mode, "review"); assert.equal(o.site.url, "https://news-site.pages.dev"); assert.equal(o.site.check.status, 200);
   assert.equal(o.lastHourly.conclusion, "success"); assert.equal(o.lastDeploy.conclusion, "failure");
-  assert.equal(o.usage.counters["groq/openai/gpt-oss-120b"].tokens, 41000);
-  assert.deepEqual(o.secrets, ["GROQ_API_KEY"]);
+  assert.equal(o.usage.counters["cf_phone1/@cf/openai/gpt-oss-120b"].tokens, 41000);
+  assert.deepEqual(o.secrets, ["BRAIN_REPO_TOKEN"]);
 });
 
 test("settings: read, change one value with the comment kept, stale version refused, bad values refused, CI validation started", async () => {
@@ -95,7 +95,7 @@ test("settings: read, change one value with the comment kept, stale version refu
   const d = await j(await c("/api/settings"));
   const mode = d.fields.find((f) => f.path.join(".") === "publish.mode");
   assert.equal(mode.value, "review"); assert.deepEqual(mode.options, ["review", "auto"]);
-  assert.ok(d.chains.strong.length >= 1); assert.ok(Object.keys(d.budget.tokens_per_day).length >= 1);
+  assert.ok(d.chains.strong.length >= 1); assert.deepEqual(d.providers, ["workers_ai"]);
   const sha = d.files["config/newsbot.yaml"].sha;
   let r = await c("/api/settings", { method: "POST", body: { changes: [{ file: "config/newsbot.yaml", kind: "field", path: ["publish", "mode"], value: "auto" }, { file: "config/newsbot.yaml", kind: "field", path: ["limits", "max_new_per_day"], value: 9 }], versions: { "config/newsbot.yaml": sha } } });
   assert.equal(r.status, 200);
@@ -117,21 +117,22 @@ test("settings: read, change one value with the comment kept, stale version refu
 test("settings: model chain, tasks, embedding and budgets", async () => {
   const { c, w } = await session();
   const post = (ch) => c("/api/settings", { method: "POST", body: { changes: [{ file: "config/llm.yaml", ...ch }] } });
-  assert.equal((await post({ kind: "chain", op: "insert", tier: "strong", index: 1, provider: "gemini", model: "gemini-9-flash" })).status, 200);
-  assert.equal(get(w.files["config/llm.yaml"], ["llm", "tiers", "strong", 1, "model"]), "gemini-9-flash");
-  assert.equal((await post({ kind: "chain", op: "set", tier: "strong", index: 1, provider: "openrouter", model: "x/y:free" })).status, 200);
-  assert.equal(get(w.files["config/llm.yaml"], ["llm", "tiers", "strong", 1, "provider"]), "openrouter");
+  assert.equal((await post({ kind: "chain", op: "insert", tier: "strong", index: 1, provider: "workers_ai", model: "@cf/test/model-a" })).status, 200);
+  assert.equal(get(w.files["config/llm.yaml"], ["llm", "tiers", "strong", 1, "model"]), "@cf/test/model-a");
+  assert.equal((await post({ kind: "chain", op: "set", tier: "strong", index: 1, provider: "workers_ai", model: "@cf/test/model-b" })).status, 200);
+  assert.equal(get(w.files["config/llm.yaml"], ["llm", "tiers", "strong", 1, "model"]), "@cf/test/model-b");
   assert.equal((await post({ kind: "chain", op: "remove", tier: "strong", index: 1 })).status, 200);
-  assert.equal(get(w.files["config/llm.yaml"], ["llm", "tiers", "strong", 1, "provider"]), "workers_ai");
+  assert.equal(get(w.files["config/llm.yaml"], ["llm", "tiers", "strong", 1, "provider"]), undefined);   // the added entry is gone, the original stays
+  assert.equal(get(w.files["config/llm.yaml"], ["llm", "tiers", "strong", 0, "provider"]), "workers_ai");
   assert.equal((await post({ kind: "task", task: "write_bn", tier: "small" })).status, 200);
   assert.equal(get(w.files["config/llm.yaml"], ["llm", "tasks", "write_bn"]), "small");
   assert.equal((await post({ kind: "embedding", provider: "workers_ai", model: "@cf/baai/bge-m3" })).status, 200);
-  assert.equal((await post({ kind: "budget", op: "set", map: "tokens_per_day", key: "gemini", value: 250000 })).status, 200);
-  assert.equal(get(w.files["config/llm.yaml"], ["llm", "budget", "tokens_per_day", "gemini"]), 250000);
-  assert.equal((await post({ kind: "budget", op: "remove", map: "tokens_per_day", key: "gemini" })).status, 200);
-  for (const bad of [{ kind: "chain", op: "set", tier: "huge", index: 0, provider: "groq", model: "m" }, { kind: "chain", op: "set", tier: "strong", index: 0, provider: "evil", model: "m" },
-    { kind: "chain", op: "set", tier: "strong", index: 0, provider: "groq", model: "bad model!" }, { kind: "task", task: "x", tier: "small" }, { kind: "budget", op: "set", map: "tokens_per_day", key: "k", value: -1 },
-    { kind: "chain", op: "remove", tier: "small", index: 0 }, { kind: "wat" }]) assert.equal((await post(bad)).status, 400, JSON.stringify(bad));
+  assert.equal((await post({ kind: "budget", op: "set", map: "tokens_per_day", key: "cf_phone1", value: 250000 })).status, 200);
+  assert.equal(get(w.files["config/llm.yaml"], ["llm", "budget", "tokens_per_day", "cf_phone1"]), 250000);
+  assert.equal((await post({ kind: "budget", op: "remove", map: "tokens_per_day", key: "cf_phone1" })).status, 200);
+  for (const bad of [{ kind: "chain", op: "set", tier: "huge", index: 0, provider: "workers_ai", model: "m" }, { kind: "chain", op: "set", tier: "strong", index: 0, provider: "evil", model: "m" }, { kind: "chain", op: "set", tier: "strong", index: 0, provider: "groq", model: "m" },
+    { kind: "chain", op: "set", tier: "strong", index: 0, provider: "workers_ai", model: "bad model!" }, { kind: "task", task: "x", tier: "small" }, { kind: "budget", op: "set", map: "tokens_per_day", key: "k", value: -1 },
+    { kind: "chain", op: "remove", tier: "strong", index: 0 }, { kind: "wat" }]) assert.equal((await post(bad)).status, 400, JSON.stringify(bad));
 });
 
 test("raw files: allow-list, structure guard, history and restore", async () => {
@@ -157,17 +158,17 @@ test("raw files: allow-list, structure guard, history and restore", async () => 
 test("keys: encrypted for GitHub's key, tested first, rejected keys not stored unless forced, names checked, value never logged", async () => {
   const { c, w, env } = await session();
   const list = await j(await c("/api/keys"));
-  assert.ok(list.keys.some((k) => k.name === "GEMINI_API_KEY")); assert.deepEqual(list.vars.map((v) => v.name), ["PAGES_PROJECT"]);
-  const value = "AIza-my-new-key-123";
-  let r = await c("/api/keys/set", { method: "POST", body: { name: "GEMINI_API_KEY", value } });
+  assert.ok(list.keys.some((k) => k.name === "BRAIN_REPO_TOKEN") && !list.keys.some((k) => /GROQ|GEMINI|OPENROUTER/.test(k.name))); assert.deepEqual(list.vars.map((v) => v.name), ["PAGES_PROJECT"]);
+  const value = "ghp_my-new-key-123";
+  let r = await c("/api/keys/set", { method: "POST", body: { name: "BRAIN_REPO_TOKEN", value } });
   assert.equal(r.status, 200); assert.equal((await j(r)).status, "created");
-  assert.equal(w.secrets.GEMINI_API_KEY.key_id, "kid1");
-  assert.equal(openSealed(w, w.secrets.GEMINI_API_KEY.encrypted_value), value);                                      // real round trip
-  w.providerStatus.groq = 401;
-  r = await c("/api/keys/set", { method: "POST", body: { name: "GROQ_API_KEY", value: "gsk_bad" } });
-  assert.equal(r.status, 422); assert.ok(!("GROQ_API_KEY" in w.secrets));
-  r = await c("/api/keys/set", { method: "POST", body: { name: "GROQ_API_KEY", value: "gsk_bad", force: true } });
-  assert.equal(r.status, 200); assert.equal(openSealed(w, w.secrets.GROQ_API_KEY.encrypted_value), "gsk_bad");
+  assert.equal(w.secrets.BRAIN_REPO_TOKEN.key_id, "kid1");
+  assert.equal(openSealed(w, w.secrets.BRAIN_REPO_TOKEN.encrypted_value), value);                                      // real round trip
+  w.providerStatus.github = 401;
+  r = await c("/api/keys/set", { method: "POST", body: { name: "WORKFLOW_PAT", value: "ghp_bad" } });
+  assert.equal(r.status, 422); assert.ok(!("WORKFLOW_PAT" in w.secrets));
+  r = await c("/api/keys/set", { method: "POST", body: { name: "WORKFLOW_PAT", value: "ghp_bad", force: true } });
+  assert.equal(r.status, 200); assert.equal(openSealed(w, w.secrets.WORKFLOW_PAT.encrypted_value), "ghp_bad");
   r = await c("/api/keys/set", { method: "POST", body: { name: "TELEGRAM_BOT_TOKEN", value: "12345678:" + "A".repeat(35) } });
   assert.equal((await j(r)).after, "setup-approve");
   r = await c("/api/keys/test", { method: "POST", body: { name: "TELEGRAM_CHAT_ID", value: "abc" } });
@@ -177,7 +178,7 @@ test("keys: encrypted for GitHub's key, tested first, rejected keys not stored u
   }
   assert.equal((await c("/api/keys/set", { method: "POST", body: { name: "MY_NEW_PROVIDER_KEY", value: "zzz" } })).status, 200);   // custom names are allowed
   const audit = JSON.stringify(await j(await c("/api/audit")));
-  assert.ok(audit.includes("GEMINI_API_KEY")); assert.ok(!audit.includes(value) && !audit.includes("gsk_bad"));
+  assert.ok(audit.includes("BRAIN_REPO_TOKEN")); assert.ok(!audit.includes(value) && !audit.includes("ghp_bad"));
   assert.equal((await c("/api/vars/set", { method: "POST", body: { name: "PAGES_PROJECT", value: "other" } })).status, 200); assert.equal(w.vars.PAGES_PROJECT, "other");
   assert.equal((await c("/api/vars/set", { method: "POST", body: { name: "NEW_VAR", value: "1" } })).status, 200); assert.equal(w.vars.NEW_VAR, "1");
   assert.equal((await c("/api/vars/set", { method: "POST", body: { name: "bad", value: "1" } })).status, 400);

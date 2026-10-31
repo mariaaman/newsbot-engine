@@ -11,7 +11,7 @@ export const checkRawPath = (p) => must(typeof p === "string" && RAW_OK.test(p) 
 const optionsFor = (field) => field;
 
 export async function describe(env) {
-  const out = { groups: GROUPS, files: {}, fields: [], chains: {}, budget: { tokens_per_day: {}, requests_per_day: {} }, tasks: {}, embedding: {}, tiers: TIERS, providers: PROVIDERS, taskNames: TASKS };
+  const out = { groups: GROUPS, files: {}, fields: [], chains: {}, budget: { tokens_per_day: {}, requests_per_day: {}, neurons_per_day: {} }, tasks: {}, embedding: {}, tiers: TIERS, providers: PROVIDERS, taskNames: TASKS };
   const texts = {};
   for (const path of CONFIG_FILES) {
     const f = await getFile(env, path);
@@ -33,7 +33,7 @@ export async function describe(env) {
       out.chains[tier] = list;
     }
     for (const [k, v] of Object.entries(flat)) {
-      const m = /^llm\.budget\.(tokens_per_day|requests_per_day)\.(.+)$/.exec(k);
+      const m = /^llm\.budget\.(tokens_per_day|requests_per_day|neurons_per_day)\.(.+)$/.exec(k);
       if (m) out.budget[m[1]][m[2]] = v;
     }
     for (const t of TASKS) out.tasks[t] = rd(["llm", "tasks", t]) ?? null;
@@ -67,7 +67,7 @@ export function applyChange(file, text, ch) {
       return { text: t, summary: `chain ${ch.tier}#${ch.index}=${ch.model.slice(0, 30)}` };
     }
     if (ch.kind === "budget") {
-      must(["tokens_per_day", "requests_per_day"].includes(ch.map), 400, "unknown budget");
+      must(["tokens_per_day", "requests_per_day", "neurons_per_day"].includes(ch.map), 400, "unknown budget");
       must(typeof ch.key === "string" && KEY_RE.test(ch.key), 400, "budget key looks wrong");
       const path = ["llm", "budget", ch.map, ch.key];
       if (ch.op === "remove") return { text: remove(text, path), summary: `budget ${ch.map}: remove ${ch.key}` };

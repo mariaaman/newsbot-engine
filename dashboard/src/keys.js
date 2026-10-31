@@ -9,9 +9,6 @@ const bearer = (v) => ({ headers: { Authorization: `Bearer ${v}` } });
 const verdict = (res, okCodes = [200]) => res.status === 0 ? { ok: null, detail: "could not reach the service" } : okCodes.includes(res.status) ? { ok: true, detail: "accepted" } : res.status === 401 || res.status === 403 ? { ok: false, detail: "rejected (wrong or no permission)" } : { ok: null, detail: `service answered ${res.status}` };
 
 export const KEYS = [
-  { name: "GEMINI_API_KEY", label: "Gemini API key", test: async (v) => verdict(await t("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1", { headers: { "x-goog-api-key": v } }), [200]) },
-  { name: "GROQ_API_KEY", label: "Groq API key", test: async (v) => verdict(await t("https://api.groq.com/openai/v1/models", bearer(v))) },
-  { name: "OPENROUTER_API_KEY", label: "OpenRouter API key", test: async (v) => verdict(await t("https://openrouter.ai/api/v1/key", bearer(v))) },
   { name: "TELEGRAM_BOT_TOKEN", label: "Telegram bot token", after: "setup-approve",
     test: async (v) => { if (!/^\d{5,}:[A-Za-z0-9_-]{30,}$/.test(v)) return { ok: false, detail: "does not look like a bot token" }; const r = await t(`https://api.telegram.org/bot${v}/getMe`); return r.status === 200 && r.json?.ok ? { ok: true, detail: "bot found" } : verdict(r); } },
   { name: "TELEGRAM_CHAT_ID", label: "Telegram chat id", after: "setup-approve", test: async (v) => /^-?\d{5,}$/.test(v) ? { ok: true, detail: "format ok" } : { ok: false, detail: "should be a number" } },
@@ -42,4 +39,75 @@ export async function testKey(env, name, value) {
   const k = KEYS.find((x) => x.name === name);
   if (!k) return { ok: null, detail: "no automatic test for this key" };
   return k.test(value.trim(), env);
+}
+
+// ---------- Cloudflare LLM accounts (any number; one secret CFLLM_<LABEL> + one mirror variable CFLLM_ID_<LABEL> each) ----------
+export const CFLLM_PREFIX = "CFLLM_", CFLLM_ID_PREFIX = "CFLLM_ID_";
+export const LABEL_RE = /^[A-Z0-9_]{1,32}$/;
+export const ACCOUNT_RE = /^[0-9a-f]{32}$/;
+const CF = "https://api.cloudflare.com/client/v4";
+
+export function normaliseLabel(raw) {
+  const l = String(raw ?? "").trim().toUpperCase().replace(/[^A-Z0-9_]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 32);
+  return l;
+}
+
+const cfErr = (r) => { const m = r.json?.errors?.[0]?.message; return typeof m === "string" ? m.replace(/\s+/g, " ").slice(0, 120) : ""; };
+const short = (r) => `${r.status}${cfErr(r) ? ": " + cfErr(r) : ""}`;
+
+/** Every check that must pass BEFORE an account is saved (and whose result the panel shows step by step).
+ *  models: chat model IDs from llm.yaml; embedding: its model ID or null. Returns { ok: true|false|null, steps: [{name, ok, detail}] }.
+ *  ok=false is a real failure (never saved); ok=null means "could not tell" (unreachable, allowance already used today). */
+export async function checkCloudflareAccount(accountId, token, { models = [], embedding = null } = {}) {
+  const steps = [];
+  const add = (name, ok, detail) => { steps.push({ name, ok, detail }); return ok; };
+  if (!ACCOUNT_RE.test(accountId || "")) { add("account id", false, "should be 32 characters of 0-9 a-f"); return finish(steps); }
+  if (typeof token !== "string" || token.trim().length < 20 || /\s/.test(token.trim())) { add("API token", false, "looks too short or contains spaces"); return finish(steps); }
+  token = token.trim();
+  add("format", true, "account id and token look right");
+  const auth = { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } };
+  const call = async (path, init = {}) => {
+    try { const r = await fetch(CF + path, { ...auth, ...init, signal: AbortSignal.timeout(25000) }); return { status: r.status, json: await r.json().catch(() => null) }; }
+    catch { return { status: 0, json: null }; }
+  };
+
+  let ids = [];
+  for (let page = 1; page <= 5; page++) {
+    const r = await call(`/accounts/${accountId}/ai/models/search?per_page=100&page=${page}`);
+    if (page === 1) {
+      if (r.status === 0) { add("token and Workers AI", null, "could not reach Cloudflare"); return finish(steps); }
+      if (r.status === 401 || r.status === 403) { add("token and Workers AI", false, "token rejected, or it has no Workers AI permission (create it with the “Workers AI” template)"); return finish(steps); }
+      if (r.status === 404) { add("token and Workers AI", false, "no such account id"); return finish(steps); }
+      if (r.status !== 200 || !r.json?.success) { add("token and Workers AI", false, `Cloudflare answered ${short(r)}`); return finish(steps); }
+    } else if (r.status !== 200) break;
+    const got = (r.json?.result || []).map((m) => m?.name).filter((n) => typeof n === "string");
+    ids = ids.concat(got);
+    if (got.length < 100) break;
+  }
+  add("token and Workers AI", true, `accepted, ${ids.length} models visible`);
+
+  for (const m of models.slice(0, 8)) {
+    if (!ids.includes(m)) { add(`model ${m}`, false, "not offered to this account"); continue; }
+    const r = await call(`/accounts/${accountId}/ai/v1/chat/completions`, { method: "POST", body: JSON.stringify({ model: m, messages: [{ role: "user", content: "Reply with the single word OK." }], max_tokens: 256 }) });
+    const text = r.json?.choices?.[0]?.message?.content;
+    if (r.status === 200 && typeof text === "string" && text.trim()) add(`model ${m}`, true, "answered");
+    else if (r.status === 200) add(`model ${m}`, false, "answered with nothing (thinking used every token)");
+    else if (r.status === 429) add(`model ${m}`, null, "today's free allowance looks used up (or rate limit); works again after 00:00 UTC");
+    else if (r.status === 0) add(`model ${m}`, null, "no answer in time");
+    else add(`model ${m}`, false, `Cloudflare answered ${short(r)}`);
+  }
+  if (embedding) {
+    if (!ids.includes(embedding)) add(`embedding ${embedding}`, false, "not offered to this account");
+    else {
+      const r = await call(`/accounts/${accountId}/ai/run/${embedding}`, { method: "POST", body: JSON.stringify({ text: ["test"] }) });
+      const ok = r.status === 200 && Array.isArray(r.json?.result?.data) && r.json.result.data.length === 1;
+      add(`embedding ${embedding}`, ok ? true : r.status === 429 || r.status === 0 ? null : false, ok ? "answered" : `Cloudflare answered ${short(r)}`);
+    }
+  }
+  return finish(steps);
+}
+
+function finish(steps) {
+  const ok = steps.some((s) => s.ok === false) ? false : steps.some((s) => s.ok === null) ? null : true;
+  return { ok, steps };
 }

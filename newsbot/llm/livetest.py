@@ -1,4 +1,4 @@
-"""Live provider test (`python -m newsbot llmtest`): does each configured provider/model really answer?
+"""Live test (`python -m newsbot llmtest`): does each configured account/model really answer?
 Two small probes per model: a tiny JSON reply, and a realistic extraction on a short Bengali + Japanese text (the case
 where JSON mode and token limits have failed). Logs only provider, model ID, probe name, status and token counts:
 never keys, prompts or answers."""
@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 
-from newsbot.llm.base import LLMError, parse_json, safe_reason
+from newsbot.llm.base import LLMError, expand_pool, parse_json, safe_reason
 
 log = logging.getLogger("newsbot.llmtest")
 
@@ -35,7 +35,8 @@ def run_livetest(settings: dict, providers: dict) -> dict:
     out = {"ok": [], "failed": [], "skipped": []}
     seen = set()
     for tier, entries in settings.get("tiers", {}).items():
-        for e in entries:
+        for e in [{"provider": n, "model": en["model"]} for en in entries
+                  for n in (expand_pool(providers, en["provider"]) or [en["provider"]])]:
             key = (e["provider"], e["model"])
             if key in seen:
                 continue
@@ -70,5 +71,4 @@ def _hint(prov, pname: str) -> None:
         ids = prov.list_models()
     except LLMError:
         return
-    want = ":free" if pname == "openrouter" else "flash" if pname == "gemini" else ""
-    log.info("llmtest hint provider=%s ids=%s", pname, ",".join([i for i in ids if want in i][:8]))
+    log.info("llmtest hint provider=%s ids=%s", pname, ",".join(ids[:8]))

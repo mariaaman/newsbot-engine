@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import worker from "../src/index.js";
-import { FakeKV, assets, fakeWorld } from "./fakes.mjs";
+import { FakeKV, assets, fakeWorld, addCf } from "./fakes.mjs";
 
 class El {
   constructor(tag) { this.nodeType = 1; this.tag = tag; this.children = []; this.attrs = {}; this.listeners = {}; this.className = ""; this.value = ""; this.checked = false; this.disabled = false; this.hidden = false; this.type = ""; this.open = false; this.selected = false; this.textContent = ""; this.innerHTML = ""; this.id = ""; this.title = ""; this.placeholder = ""; this.maxLength = 0; this.classList = { toggle: (c, on) => { const s = new Set(this.className.split(" ").filter(Boolean)); on ? s.add(c) : s.delete(c); this.className = [...s].join(" "); } }; }
@@ -43,7 +43,7 @@ const go = async (hash) => { location.hash = hash; winListeners.hashchange(); aw
 const click = async (pred, text) => { const b = view.find((e) => e.tag === "button" && pred(e) && e.text().includes(text))[0]; assert.ok(b, "button: " + text); for (const fn of b.listeners.click || []) await fn({ target: b }); await tick(); };
 
 test("every screen renders without an error card", async () => {
-  for (const hash of ["#/", "#/drafts", "#/articles", "#/settings", "#/keys", "#/runs", "#/more", "#/draft/en/dead-actor", "#/draft/en/bad-gate", "#/article/en/live-one"]) {
+  for (const hash of ["#/", "#/drafts", "#/articles", "#/settings", "#/keys", "#/llm", "#/runs", "#/more", "#/draft/en/dead-actor", "#/draft/en/bad-gate", "#/article/en/live-one"]) {
     await go(hash);
     const text = view.text();
     assert.ok(!view.find((e) => e.className.includes("card bad") && e.text().includes("ত্রুটি")).length, `${hash}: ${text.slice(0, 200)}`);
@@ -54,7 +54,7 @@ test("every screen renders without an error card", async () => {
 test("home shows the mode, counts and the run button works", async () => {
   await go("#/");
   const t = view.text();
-  assert.match(t, /review/); assert.match(t, /প্রকাশিত 1/); assert.match(t, /খসড়া 3/); assert.match(t, /GROQ_API_KEY|অনুপস্থিত সিক্রেট/);
+  assert.match(t, /review/); assert.match(t, /প্রকাশিত 1/); assert.match(t, /খসড়া 3/); assert.match(t, /অনুপস্থিত সিক্রেট/);
   await click(() => true, "এখনই চালান");
   assert.equal(world.dispatches.at(-1).workflow, "hourly");
 });
@@ -86,13 +86,37 @@ test("settings screen: editing a number marks it changed and the save bar writes
 
 test("keys screen: a key can be tested and saved from the page", async () => {
   await go("#/keys");
-  const cards = view.find((e) => e.className === "card" && e.text().includes("GEMINI_API_KEY"));
+  const cards = view.find((e) => e.className === "card" && e.text().includes("BRAIN_REPO_TOKEN"));
   const card = cards[cards.length - 1];
   const val = card.find((e) => e.tag === "input" && e.type === "password")[0];
-  val.value = "AIza-from-the-ui";
+  val.value = "ghp_from-the-ui";
   const save = card.find((e) => e.tag === "button" && e.text() === "সংরক্ষণ")[0];
   for (const fn of save.listeners.click) await fn({ target: save });
   await tick();
-  assert.ok(world.secrets.GEMINI_API_KEY);
+  assert.ok(world.secrets.BRAIN_REPO_TOKEN);
   assert.equal(val.value, "");                                                      // the typed value is cleared after saving
+});
+
+test("llm screen: add an account with the form (checked first), see it with its usage, remove it", async () => {
+  const a = addCf(world, 1);
+  await go("#/llm");
+  assert.match(view.text(), /LLM অ্যাকাউন্ট পুল/); assert.match(view.text(), /এখনো কোনো অ্যাকাউন্ট যোগ করা হয়নি/);
+  const inputs = view.find((e) => e.tag === "input");
+  const [label, id, token] = inputs;
+  label.value = "phone1"; id.value = a.id; token.value = a.token;
+  const test = view.find((e) => e.tag === "button" && e.text().includes("শুধু পরীক্ষা"))[0];
+  for (const fn of test.listeners.click) await fn({ target: test });
+  await tick(150);
+  assert.match(view.text(), /সব পরীক্ষা পাস/); assert.ok(!world.secrets.CFLLM_PHONE1);          // a test alone saves nothing
+  const add = view.find((e) => e.tag === "button" && e.text().includes("পরীক্ষা করে যোগ করুন"))[0];
+  for (const fn of add.listeners.click) await fn({ target: add });
+  await tick(300);
+  assert.ok(world.secrets.CFLLM_PHONE1);
+  assert.equal(token.value, "");                                                                  // the typed token is cleared
+  assert.match(view.text(), /PHONE1/);
+  assert.match(view.text(), /আজকের অবস্থা/);
+  const rm = view.find((e) => e.tag === "button" && e.text() === "মুছুন")[0];
+  for (const fn of rm.listeners.click) await fn({ target: rm });
+  await tick(300);
+  assert.ok(!world.secrets.CFLLM_PHONE1);
 });

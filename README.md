@@ -3,7 +3,7 @@
 An automated, bilingual (Bengali and English) news site that tries to be trustworthy rather than big. Every hour it
 looks at Google Trends, Google News and trusted RSS feeds, picks the few stories worth covering, gathers facts from
 several independent sources, cross-checks them, and writes a source-analysed article. The same story is updated in
-place (same URL) when verified new facts appear. Hosting is Cloudflare Pages (free plan), the models are Groq's free
+place (same URL) when verified new facts appear. Hosting is Cloudflare Pages (free plan), the models are Cloudflare Workers AI's free
 tier first, income is Google AdSense once approved.
 
 This repository (**newsbot-engine**, public) holds the code, the Hugo site, the workflows and the tests. Everything
@@ -48,17 +48,16 @@ Create **newsbot-engine** (public) with the contents of `engine/`, and **newsbot
 `site.base_url` and `publish.mode: review`. Keep `main` as the default branch in both and do not protect the brain's `main`.
 
 ## 2. Accounts and tokens
-Cloudflare: note the Account ID and create an API token with *Cloudflare Pages: Edit* and *Workers AI: Read*. Groq: an
-API key (optional: a Gemini key). GitHub: a fine-grained token for the **brain repo only** with *Contents* and
+Cloudflare: note the Account ID and create an API token with *Cloudflare Pages: Edit* and *Workers AI: Read*. LLM accounts: any number of
+Cloudflare accounts, added later in the dashboard (page LLM). GitHub: a fine-grained token for the **brain repo only** with *Contents* and
 *Pull requests* read and write. Telegram (optional, recommended): a bot from **@BotFather** (`/newbot`), press Start on it,
 and find your chat ID (details in FIRST_RUN).
 
 ## 3. Engine repo secrets and variables (Settings, Secrets and variables, Actions)
-Secrets: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `GROQ_API_KEY`, `BRAIN_REPO_TOKEN`, optional
-`GEMINI_API_KEY`, and for Telegram `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (both or neither). Variables: `BRAIN_REPO` (`owner/newsbot-brain`), `PAGES_PROJECT`, `PUBLISH_MODE` (`review`).
+Secrets: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `BRAIN_REPO_TOKEN`, and for Telegram `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (both or neither). Variables: `BRAIN_REPO` (`owner/newsbot-brain`), `PAGES_PROJECT`, `PUBLISH_MODE` (`review`).
 
 ## 4. Run `setup` (Actions tab, setup, Run workflow)
-Every line must say `OK` (`SKIP` for the optional Gemini key or for Telegram is fine; with Telegram set it also sends a test message). It creates the Pages project if missing and
+Every line must say `OK` (`SKIP` for Telegram is fine; with Telegram set it also sends a test message). It creates the Pages project if missing and
 checks the tokens, the brain repo structure and the configured model IDs. Fix a failing model ID in the brain's
 `config/llm.yaml` and run it again.
 

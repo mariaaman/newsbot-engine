@@ -88,7 +88,7 @@ export async function runs(env, limit = 20) {
   return (j.workflow_runs || []).map((r) => ({ id: r.id, name: r.name, event: r.event, status: r.status, conclusion: r.conclusion, created: r.created_at, started: r.run_started_at, updated: r.updated_at, url: r.html_url, title: (r.display_title || "").slice(0, 100) }));
 }
 
-export const WORKFLOWS = ["hourly", "deploy", "validate-config", "setup-approve", "setup", "readiness"];
+export const WORKFLOWS = ["hourly", "deploy", "validate-config", "setup-approve", "setup", "readiness", "llm-check"];
 export async function dispatch(env, workflow, inputs) {
   if (!WORKFLOWS.includes(workflow)) throw new HttpError(400, "unknown workflow");
   const { engine, eb } = repos(env);
@@ -100,6 +100,18 @@ export async function listSecrets(env) {
   const { engine } = repos(env);
   const j = need(await gh(env, `/repos/${engine}/actions/secrets?per_page=100`), 200);
   return (j.secrets || []).map((s) => ({ name: s.name, updated: s.updated_at }));
+}
+export async function deleteSecret(env, name) {
+  const { engine } = repos(env);
+  const res = await gh(env, `/repos/${engine}/actions/secrets/${q(name)}`, { method: "DELETE" });
+  need(res, 204, 404);
+  return res.status === 204 ? "deleted" : "absent";
+}
+export async function deleteVar(env, name) {
+  const { engine } = repos(env);
+  const res = await gh(env, `/repos/${engine}/actions/variables/${q(name)}`, { method: "DELETE" });
+  need(res, 204, 404);
+  return res.status === 204 ? "deleted" : "absent";
 }
 export async function listVars(env) {
   const { engine } = repos(env);

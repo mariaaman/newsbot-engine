@@ -1,24 +1,34 @@
-# LLM routing. Never hard-code model IDs in code: they live here and are verified against each
-# provider's models endpoint at startup (`python -m newsbot health`). Every ID below is # VERIFY.
-# Chains are tried in order; a provider is used only if its key exists (Groq first).
-# Kept deliberately small: one small and one strong model on Groq, Workers AI 70B as the strong fallback,
-# and the embedding model. (Gemini and a small Workers AI model were removed: fewer IDs that can go stale.)
+# LLM routing: ONLY Cloudflare Workers AI. Provider "workers_ai" in a chain means the POOL of every Cloudflare account
+# added in the dashboard (tab "কী" -> "LLM অ্যাকাউন্ট"): any number, all used equally (least-used first, ties take turns).
+# Chains are tried in order; when an account is out of allowance or fails, the next account takes over.
+# A task whose answer fails the JSON schema twice moves to the next DIFFERENT model in its chain (20b -> 120b).
+# Model IDs are checked on every account by `python -m newsbot health` and really tried by `llmcheck` (dashboard: "এখনই যাচাই").
+# Free Workers AI allowance: 10,000 neurons per account per day (resets 00:00 UTC). Every ID and number below is # VERIFY.
 llm:
   tasks: {extract: small, verify: strong, write_bn: strong, write_en: strong, qa_check: small}
   tiers:
     small:
-      - {provider: groq, model: "openai/gpt-oss-20b"}                        # VERIFY
+      - {provider: workers_ai, model: "@cf/openai/gpt-oss-20b"}             # VERIFY: cheap model for extraction / checks
+      - {provider: workers_ai, model: "@cf/openai/gpt-oss-120b"}            # VERIFY: takes over when 20b fails the schema
     strong:
-      - {provider: groq, model: "openai/gpt-oss-120b"}                       # VERIFY
-      - {provider: workers_ai, model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast"}   # VERIFY
+      - {provider: workers_ai, model: "@cf/openai/gpt-oss-120b"}            # VERIFY: fact checking and article writing
   embedding: {provider: workers_ai, model: "@cf/baai/bge-m3"}                # VERIFY multilingual (bn) support
   budget:
-    stop_fraction: 0.9            # stop LLM work and queue stories at 90% of a limit
-    # keys: "provider" (sum of its models) or "provider/model" (wins over provider). VERIFY all limits.
-    tokens_per_day:
-      "groq/openai/gpt-oss-120b": 180000
-      "groq/openai/gpt-oss-20b": 180000
-      workers_ai: 150000           # rough proxy for the free neuron allowance
-    requests_per_day:
-      groq: 900
-  retry: {max_retries: 3, base_delay_s: 2, max_delay_s: 60}   # also honours Retry-After on 429
+    stop_fraction: 0.9                  # an account stops at 90% of its daily allowance; the next account takes over
+    neurons_per_day_per_account: 10000  # VERIFY: Cloudflare free allowance of EACH account (set higher on a paid account, 0 = no limit)
+    neurons_per_day: {}                 # per-account override, key = cf_<label in lower case>, e.g. cf_phone1: 50000
+    tokens_per_day: {}                  # optional extra limits by tokens or requests: key = cf_<label> or cf_<label>/<model>
+    requests_per_day: {}
+  # Neurons per MILLION tokens (from Cloudflare's price list: dollars per million tokens / 0.000011). VERIFY.
+  # A model that is not listed is counted at the "default" rate (the dearest, so the allowance is never under-counted).
+  neuron_rates:
+    "@cf/openai/gpt-oss-120b": {in: 31818, out: 68182}
+    "@cf/openai/gpt-oss-20b": {in: 18182, out: 27273}
+    "@cf/qwen/qwen3.8-27b": {in: 40909, out: 290909}
+    "@cf/baai/bge-m3": {in: 1075, out: 0}
+    default: {in: 40909, out: 290909}
+  # Extra request fields per model. gpt-oss models "think" first and thinking tokens are billed as output:
+  # low effort keeps extraction and checks cheap. A model that rejects a field is asked again without it.
+  model_params:
+    "@cf/openai/gpt-oss-20b": {reasoning_effort: low}
+  retry: {max_retries: 3, base_delay_s: 5, max_delay_s: 40}   # 429: the next account is tried at once; only the last one waits

@@ -4,7 +4,7 @@ never response bodies: the engine repo is public). Exit 1 if any required check 
 
 Checks: required secrets and variables are present, the brain token reaches the brain repo, the Cloudflare token is
 valid, the Pages project exists (created when missing), Workers AI embeddings answer, and the brain repo has the
-files the engine needs. Optional: the Telegram bot token and chat (a test message is sent). Groq/Gemini model IDs are checked by `python -m newsbot health` in the same workflow."""
+files the engine needs. Optional: the Telegram bot token and chat (a test message is sent). LLM accounts (any number, added in the dashboard) are checked here and by `python -m newsbot health` / `llmcheck`."""
 from __future__ import annotations
 
 import json
@@ -14,8 +14,8 @@ from pathlib import Path
 
 import requests
 
-REQUIRED_SECRETS = ("CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "GROQ_API_KEY", "BRAIN_REPO_TOKEN")
-OPTIONAL_SECRETS = ("GEMINI_API_KEY", "OPENROUTER_API_KEY")
+REQUIRED_SECRETS = ("CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "BRAIN_REPO_TOKEN")
+OPTIONAL_SECRETS = ()
 REQUIRED_VARS = ("PAGES_PROJECT", "BRAIN_REPO")
 BRAIN_FILES = ("config/newsbot.yaml", "config/llm.yaml", "config/sources.bn.yaml", "config/sources.en.yaml",
                "prompts/extract.md", "prompts/verify.md", "prompts/write_bn.md", "prompts/write_en.md",
@@ -78,9 +78,25 @@ def check_cloudflare(env, http) -> list[Result]:
             out.append(("OK" if code == 200 else "FAIL", "pages project created"))
         else:
             out.append(("FAIL", "pages project check"))
+    return out
+
+
+def check_llm_accounts(env, http) -> list[Result]:
+    """Every Cloudflare account that may serve LLM work (the dashboard's accounts; the deploy account when there are none)
+    must answer an embedding call. Labels only, never ids or tokens."""
+    try:
+        from newsbot.llm import load_cf_accounts
+        accounts = load_cf_accounts(env)
+    except Exception:                                  # engine dependencies missing: report it, do not crash the check
+        return [("FAIL", "llm accounts could not be read")]
+    if not accounts:
+        return [("FAIL", "llm accounts: none (open the dashboard, page LLM, and add at least one Cloudflare account)")]
     emb = embedding_model(Path(env.get("NEWSBOT_BRAIN_DIR", "brain")))
-    code, _ = http("POST", f"{CF}/accounts/{acct}/ai/run/{emb}", h, {"text": ["test"]})   # VERIFY path and body
-    out.append(("OK" if code == 200 else "FAIL", "workers ai embeddings"))
+    out = [("OK", f"llm accounts: {len(accounts)}")]
+    for a in accounts:
+        h = {"Authorization": f"Bearer {a['token']}", "Content-Type": "application/json"}
+        code, _ = http("POST", f"{CF}/accounts/{a['account_id']}/ai/run/{emb}", h, {"text": ["test"]})   # VERIFY path and body
+        out.append(("OK" if code == 200 else "FAIL", f"llm account {a['label']} workers ai embeddings"))
     return out
 
 
@@ -117,7 +133,7 @@ def check_brain_structure(brain: Path) -> list[Result]:
 
 
 def run_all(env, brain: Path, http=default_http) -> list[Result]:
-    return (check_env(env) + check_brain_repo(env, http) + check_cloudflare(env, http) + check_telegram(env, http)
+    return (check_env(env) + check_brain_repo(env, http) + check_cloudflare(env, http) + check_llm_accounts(env, http) + check_telegram(env, http)
             + check_brain_structure(brain))
 
 

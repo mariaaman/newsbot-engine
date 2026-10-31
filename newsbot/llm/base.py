@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol
@@ -103,12 +104,59 @@ def validate(data: Any, schema: Any) -> Any:
     return schema(data)
 
 
+def expand_pool(providers: dict, pname: str) -> list[str]:
+    """A chain entry names either one provider or a POOL (e.g. "workers_ai" = every Cloudflare account that was
+    registered). Returns the registered provider names behind it, [] when none."""
+    if pname in providers:
+        return [pname]
+    return sorted(n for n, p in providers.items() if getattr(p, "pool", None) == pname)
+
+
+class PoolPicker:
+    """Decides which account of a pool is used next, so all accounts are used EQUALLY.
+    Least-used first (share of today's neuron allowance, rounded to 1%); accounts at the same level take turns
+    (round robin); an account that just failed goes to the back for the rest of the run. Thread-safe."""
+
+    def __init__(self, budget=None):
+        self.budget = budget
+        self.cooling: set[str] = set()
+        self._rr = 0
+        self._lock = threading.Lock()
+
+    def order(self, names: list[str]) -> list[str]:
+        """Accounts that are on the same level (same share of allowance used, none failing) take turns: the group is
+        rotated by one more place on every call, so the first place is shared out evenly."""
+        with self._lock:
+            self._rr += 1
+            frac = getattr(self.budget, "neuron_fraction", None) if self.budget else None
+            keyed = sorted(((name in self.cooling, round(frac(name), 2) if frac else 0.0, i, name) for i, name in enumerate(names)))
+            out: list[str] = []
+            i = 0
+            while i < len(keyed):
+                j = i
+                while j < len(keyed) and keyed[j][:2] == keyed[i][:2]:
+                    j += 1
+                group = [k[3] for k in keyed[i:j]]
+                r = self._rr % len(group)
+                out += group[r:] + group[:r]
+                i = j
+            return out
+
+    def cool(self, name: str) -> None:
+        with self._lock:
+            self.cooling.add(name)
+
+    def warm(self, name: str) -> None:
+        with self._lock:
+            self.cooling.discard(name)
+
+
 class LLM:
     """settings: dict from llm.yaml (tasks, tiers, retry). providers: name -> Provider (only those
     with keys should be registered). budget: Budget | None."""
 
     def __init__(self, settings: dict, providers: dict[str, Provider], budget=None,
-                 sleep: Callable[[float], None] = time.sleep):
+                 sleep: Callable[[float], None] = time.sleep, picker: PoolPicker | None = None):
         self.tasks: dict[str, str] = settings.get("tasks", {})
         self.tiers: dict[str, list[dict]] = settings.get("tiers", {})
         r = settings.get("retry", {})
@@ -118,13 +166,18 @@ class LLM:
         self.providers = providers
         self.budget = budget
         self._sleep = sleep
+        self.picker = picker or PoolPicker(budget)
 
     def chain(self, task: str) -> list[tuple[str, str]]:
         if task not in self.tasks:
             raise LLMError(f"unknown task: {task}")
         tier = self.tasks[task]
-        out = [(e["provider"], e["model"]) for e in self.tiers.get(tier, [])
-               if e["provider"] in self.providers]
+        out: list[tuple[str, str]] = []
+        for e in self.tiers.get(tier, []):
+            names = expand_pool(self.providers, e["provider"])
+            if len(names) > 1:
+                names = self.picker.order(names)          # equal use: the least-used account first, ties take turns
+            out.extend((n, e["model"]) for n in names)
         if not out:
             raise LLMError(f"no available provider for task {task} (tier {tier}); check keys")
         return out
@@ -134,13 +187,15 @@ class LLM:
         return any(self.budget is None or self.budget.can_spend(p, m, est_tokens)
                    for p, m in self.chain(task))
 
-    def _call(self, prov: Provider, model: str, messages, json_mode, max_tokens, task) -> Response:
+    def _call(self, prov: Provider, model: str, messages, json_mode, max_tokens, task,
+              retries: int | None = None) -> Response:
+        retries = self.max_retries if retries is None else retries
         delay = self.base_delay
-        for attempt in range(self.max_retries + 1):
+        for attempt in range(retries + 1):
             try:
                 return prov.chat(model, messages, json_mode=json_mode, max_tokens=max_tokens, task=task)
             except RateLimited as e:
-                if attempt == self.max_retries:
+                if attempt == retries:
                     raise ProviderError("rate limited after retries") from e
                 wait = min(e.retry_after if e.retry_after is not None else delay, self.max_delay)
                 log.warning("429 task=%s provider=%s attempt=%d wait=%.1fs", task, prov.name, attempt + 1, wait)
@@ -155,17 +210,25 @@ class LLM:
         est = estimate_tokens(messages, max_tokens)
         last: Exception | None = None
         tried = False
-        for pname, model in self.chain(task):
-            if self.budget and not self.budget.can_spend(pname, model, est):
+        chain = self.chain(task)
+        bad_models: set[str] = set()        # a model whose answer failed the schema twice is not retried on other accounts
+        for pos, (pname, model) in enumerate(chain):
+            if model in bad_models:
+                continue
+            if self.budget and not self.budget.can_spend(pname, model, est, est_out=max_tokens):
                 continue
             tried = True
             prov = self.providers[pname]
             msgs = list(messages)
+            # another entry is waiting behind this one: give up on a 429 quickly and let it take over
+            retries = self.max_retries if pos == len(chain) - 1 else min(1, self.max_retries)
             try:
                 for repair in (False, True):
-                    resp = self._call(prov, model, msgs, want_json, max_tokens, task)
+                    resp = self._call(prov, model, msgs, want_json, max_tokens, task, retries)
+                    self.picker.warm(pname)
                     if self.budget:
-                        self.budget.record(pname, model, resp.total_tokens or est)
+                        self.budget.record(pname, model, resp.total_tokens or est,
+                                           prompt=resp.prompt_tokens, completion=resp.completion_tokens)
                     log.info("llm task=%s provider=%s model=%s tokens=%d", task, pname, model, resp.total_tokens)
                     if not want_json:
                         return resp.text
@@ -179,11 +242,19 @@ class LLM:
                         msgs = msgs + [{"role": "assistant", "content": resp.text},
                                        {"role": "user", "content": "Your reply was not valid for the required JSON "
                                         f"schema ({str(e)[:300]}). Reply again with ONLY the corrected JSON."}]
-                        if self.budget and not self.budget.can_spend(pname, model, est):
+                        if self.budget and not self.budget.can_spend(pname, model, est, est_out=max_tokens):
                             raise BudgetExhausted(task)
                 raise last  # type: ignore[misc]
+            except SchemaError as e:             # the next DIFFERENT (stronger) model in the chain gets a try
+                last = e
+                bad_models.add(model)
+                log.warning("schema failed task=%s provider=%s model=%s, trying a different model", task, pname, model)
+                continue
             except ProviderError as e:
                 last = e
+                self.picker.cool(pname)
+                if self.budget and hasattr(self.budget, "record_failure"):
+                    self.budget.record_failure(pname, model, safe_reason(e))
                 log.warning("provider failed task=%s provider=%s reason=%s, trying next", task, pname, safe_reason(e))
                 continue
         if not tried:

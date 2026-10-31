@@ -61,7 +61,7 @@ export const FIELDS = [
   num(N, ["research", "attach_threshold"], "research", "সংযুক্তির সীমা", "সম্পর্কিত একক আইটেম টানার ঘনিষ্ঠতা। ০ = বন্ধ। অন্য ঘটনা ঢুকলে বাড়ান", 0, 1),
   int(N, ["research", "max_extra_items"], "research", "অতিরিক্ত আইটেম", "", 0),
   num(N, ["research", "window_hours"], "research", "সময়ের জানালা (ঘণ্টা)", "", 0, undefined, true),
-  int(N, ["research", "source_chars"], "research", "সূত্র-পাতার অক্ষর", "Groq ফ্রি টিয়ারে টোকেন সীমা আছে", 1000, 30000),
+  int(N, ["research", "source_chars"], "research", "সূত্র-পাতার অক্ষর", "বেশি দিলে প্রতি আর্টিকেলে neuron বেশি লাগে", 1000, 30000),
   int(N, ["research", "claims_per_source"], "research", "সূত্রপ্রতি তথ্য", "বেশি = সমৃদ্ধ লেখা", 5, 60),
 
   int(N, ["qa", "min_words", "bn"], "qa", "ন্যূনতম শব্দ (বাংলা)", "কম শব্দের লেখা pending-এ যায়", 50),
@@ -104,7 +104,8 @@ export const FIELDS = [
   str(N, ["notify", "telegram", "edit_url"], "telegram", "approve Worker-এর ঠিকানা", "খসড়ার ব্যক্তিগত লিংকের জন্য", { pattern: "^(https://[A-Za-z0-9.-]+(:[0-9]+)?/?)?$" }),
 
   num(L, ["llm", "budget", "stop_fraction"], "llm", "বাজেটের কতটুকুতে থামবে", "০.৯ = সীমার ৯০%-এ পরের মডেলে যাবে", 0, 1, true),
-  int(L, ["llm", "retry", "max_retries"], "llm", "429-এ সর্বোচ্চ পুনরায় চেষ্টা", "ফ্রি টিয়ার প্রতি মিনিটে সীমা দেয়", 0),
+  int(L, ["llm", "budget", "neurons_per_day_per_account"], "llm", "প্রতি অ্যাকাউন্টের দৈনিক neuron সীমা", "Cloudflare ফ্রি = ১০,০০০ (মধ্যরাত UTC-তে রিসেট)। ০ = সীমাহীন", 0),
+  int(L, ["llm", "retry", "max_retries"], "llm", "429-এ সর্বোচ্চ পুনরায় চেষ্টা", "শেষ অ্যাকাউন্টেই অপেক্ষা করে; আগেরগুলো থেকে সঙ্গে সঙ্গে পরেরটায় যায়", 0),
   num(L, ["llm", "retry", "base_delay_s"], "llm", "প্রথম অপেক্ষা (সেকেন্ড)", "", 0),
   num(L, ["llm", "retry", "max_delay_s"], "llm", "সর্বোচ্চ অপেক্ষা (সেকেন্ড)", "", 0),
 ];
@@ -114,7 +115,7 @@ for (const cat of ["death", "crime", "health", "election", "religion", "minors",
 }
 
 export const TASKS = ["extract", "verify", "write_bn", "write_en", "qa_check"];
-export const PROVIDERS = ["groq", "workers_ai", "gemini", "openrouter"];
+export const PROVIDERS = ["workers_ai"];
 export const TIERS = ["small", "strong"];
 
 const key = (f) => `${f.file}|${JSON.stringify(f.path)}`;

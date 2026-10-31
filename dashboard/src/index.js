@@ -4,6 +4,7 @@ import { readSession, login, clearCookie, authStatus, logoutAll, totpBegin, totp
 import * as gh from "./github.js";
 import * as settings from "./settings.js";
 import * as articles from "./articles.js";
+import * as llm from "./llm.js";
 import { KEYS, testKey, checkSecretName, checkSecretValue, VAR_NAME } from "./keys.js";
 import { reader } from "./yamledit.js";
 
@@ -138,6 +139,11 @@ const ROUTES = {
     await audit(env, req, "key set", `${b.name} (${status})`);          // the name only, never the value
     return { status, test, after: KEYS.find((k) => k.name === b.name)?.after || null };
   },
+  "GET /api/llm": (env) => llm.overview(env),
+  "POST /api/llm/test": (env, req, b) => llm.test(env, b),
+  "POST /api/llm/add": (env, req, b) => llm.add(env, b, (a, d) => audit(env, req, a, d)),
+  "POST /api/llm/remove": (env, req, b) => llm.remove(env, b, (a, d) => audit(env, req, a, d)),
+  "POST /api/llm/check": (env, req) => llm.checkNow(env, (a, d) => audit(env, req, a, d)),
   "POST /api/vars/set": async (env, req, b) => {
     must(typeof b.name === "string" && VAR_NAME.test(b.name), 400, "variable names: capital letters, digits and _");
     must(typeof b.value === "string" && b.value.length <= 1000 && !/[\r\n]/.test(b.value), 400, "the value must be one line (up to 1000 characters)");

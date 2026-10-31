@@ -43,3 +43,11 @@ setup-dashboard যতবার চালাবেন, নতুন সেশন
 - **লুকানো ≠ মোছা:** ‘সাইট থেকে লুকান’ লেখাটার ফ্রন্ট ম্যাটারে `draft: true` বসায়; Hugo পাতাটা বানায় না। ফাইল `content/`-এ থাকে বলে ইঞ্জিনের হিসাব (প্রকাশিত স্টোরি) ঠিক থাকে। ফাইল মুছে ফেললে ইঞ্জিন বিভ্রান্ত হতে পারত, তাই মোছার বাটন রাখিনি।
 - **ভুল সেটিং:** প্রতি সংরক্ষণের পর `validate-config` চলে। লাল হলে (রান ট্যাবে দেখুন) সেটিংস, ফাইল অংশ থেকে আগের সংস্করণ ফিরিয়ে আনুন। ইঞ্জিনও প্রতি রানের শুরুতে কনফিগ যাচাই করে, ভুল থাকলে কিছু প্রকাশ করে না।
 - **টেলিগ্রাম টোকেন/চ্যাট আইডি বদলালে** ‘কী’ পাতায় সংরক্ষণের পর **setup-approve** চালান, যাতে অনুমোদন Worker নতুন মান পায়। Cloudflare টোকেন ড্যাশবোর্ড ধরে না, ইচ্ছা করে।
+
+
+## LLM page (Cloudflare account pool)
+Tab *কী* → card **LLM অ্যাকাউন্ট পুল** (`#/llm`). Add any number of Cloudflare accounts (Account ID + a "Workers AI" token); the server tests
+each one (token, Workers AI permission, every configured model, a tiny real call per model, an embedding call) before it saves anything.
+Each account shows today's neurons, % of its daily limit, requests, tokens, failures, per-model numbers and the last error.
+**এখনই যাচাই** runs workflow `llm-check` and shows the stored result. Remove deletes the secret and its variable. See docs/LLM_PROVIDERS.md.
+API: `GET /api/llm`, `POST /api/llm/test|add|remove|check`.

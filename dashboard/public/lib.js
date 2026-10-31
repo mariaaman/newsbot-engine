@@ -5,7 +5,7 @@ export const LANGS = [["bn", "বাংলা"], ["en", "English"]];          //
 export const DEFAULT_LANG = "bn";
 
 // Secrets the bot needs to run end to end (the dashboard shows which are missing; it can never read a value).
-export const REQUIRED_SECRETS = ["GROQ_API_KEY", "BRAIN_REPO_TOKEN", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "APPROVE_GH_TOKEN"];
+export const REQUIRED_SECRETS = ["BRAIN_REPO_TOKEN", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "APPROVE_GH_TOKEN"];
 
 export const RAW_FILES = [
   "config/newsbot.yaml", "config/llm.yaml",
@@ -14,7 +14,7 @@ export const RAW_FILES = [
 ];
 
 export const WORKFLOW_LABELS = [
-  ["hourly", "hourly: এখনই একটা রান"], ["deploy", "deploy: সাইট আবার প্রকাশ"], ["validate-config", "validate-config: কনফিগ যাচাই"],
+  ["hourly", "hourly: এখনই একটা রান"], ["deploy", "deploy: সাইট আবার প্রকাশ"], ["validate-config", "validate-config: কনফিগ যাচাই"], ["llm-check", "llm-check: সব LLM অ্যাকাউন্ট যাচাই"],
   ["readiness", "readiness: প্রস্তুতি-পরীক্ষা"], ["setup-approve", "setup-approve: অনুমোদন Worker বসান"],
 ];
 

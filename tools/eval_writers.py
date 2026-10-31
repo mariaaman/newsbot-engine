@@ -33,7 +33,7 @@ def main(argv=None) -> int:
         providers = build_providers()
         targets = targets_from_settings(settings, providers)
         if not targets:
-            print("no write model is usable: set GROQ_API_KEY (or Gemini / Cloudflare keys)")
+            print("no write model is usable: add at least one Cloudflare LLM account in the dashboard (page LLM)")
             return 3
     print(format_table(run_eval(cfg, args.brain, stories, targets, providers, settings.get("retry"))))
     return 0
