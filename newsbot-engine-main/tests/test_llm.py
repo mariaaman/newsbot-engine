@@ -1,0 +1,381 @@
+"""M2 tests. Zero-arg functions (tempfile, no fixtures) so they run under pytest AND the offline runner."""
+import json
+import logging
+import tempfile
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+from newsbot.llm import (LLM, Budget, BudgetExhausted, HealthCheckError, MockProvider, ProviderError,
+                         RateLimited, SchemaError, build_embedder, build_llm, check_models,
+                         load_llm_settings)
+from newsbot.llm.base import Response, parse_json
+from newsbot.llm.workers_ai import WorkersAIEmbedder, WorkersAIProvider
+
+TEMPLATE = Path(__file__).resolve().parent.parent / "brain-template"
+MSG = [{"role": "system", "content": "sys"}, {"role": "user", "content": "x" * 350}]  # ~100 tokens est
+
+
+def settings(**kw):
+    s = {"tasks": {"extract": "small", "write_en": "strong"},
+         "tiers": {"small": [{"provider": "mock", "model": "m-small"}],
+                   "strong": [{"provider": "mock", "model": "m-strong"}]},
+         "retry": {"max_retries": 3, "base_delay_s": 2, "max_delay_s": 60}}
+    s.update(kw)
+    return s
+
+
+class Flaky:
+    """Provider that raises the queued exceptions, then returns text."""
+    name = "flaky"
+
+    def __init__(self, script, text='{"ok": 1}'):
+        self.script, self.text, self.n = list(script), text, 0
+
+    def chat(self, model, messages, *, json_mode=False, max_tokens=1024, task=""):
+        self.n += 1
+        if self.script:
+            raise self.script.pop(0)
+        return Response(self.text, 10, 10, model, self.name)
+
+    def list_models(self):
+        return ["m"]
+
+
+def test_budget_stops_work_at_the_limit():
+    with tempfile.TemporaryDirectory() as d:
+        mock = MockProvider({"extract": {"a": 1}})
+        b = Budget(Path(d) / "usage.json", token_limits={"mock": 1000}, stop_fraction=0.9)
+        llm = LLM(settings(), {"mock": mock}, b)
+        ok = 0
+        try:
+            for _ in range(50):
+                llm.complete("extract", MSG, schema=lambda x: x, max_tokens=100)
+                ok += 1
+        except BudgetExhausted:
+            pass
+        assert 1 <= ok < 50 and len(mock.calls) == ok          # stopped, and made no call after the stop
+        assert b._used("mock", "tokens") <= 900 + 300          # last call may overshoot only by its own size
+        assert not llm.can_run("extract", 500)
+
+
+def test_budget_persists_and_rolls_over_at_day_change():
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "usage.json"
+        t = [datetime(2026, 10, 14, 10, tzinfo=timezone.utc)]
+        b = Budget(p, token_limits={"groq": 1000}, now_fn=lambda: t[0])
+        b.record("groq", "m1", 400)
+        b2 = Budget(p, token_limits={"groq": 1000}, now_fn=lambda: t[0])
+        assert b2.counters["groq/m1"]["tokens"] == 400 and b2.counters["groq/m1"]["requests"] == 1
+        assert not b2.can_spend("groq", "m1", 600)             # 400+600 > 900
+        t[0] += timedelta(days=1)
+        assert b2.can_spend("groq", "m1", 600) and b2.counters == {}
+
+
+def test_model_level_limit_wins_over_provider_limit():
+    b = Budget(None, token_limits={"groq": 10_000, "groq/big": 100}, stop_fraction=1.0)
+    assert b.can_spend("groq", "small", 5_000) and not b.can_spend("groq", "big", 101)
+    b.record("groq", "small", 9_000)
+    assert not b.can_spend("groq", "small", 2_000)             # provider-level sum counted across models
+    assert b.can_spend("other", "x", 10**9)                    # no limit configured = unlimited
+
+
+def test_request_limit_stops_work():
+    b = Budget(None, request_limits={"mock": 2}, stop_fraction=1.0)
+    llm = LLM(settings(), {"mock": MockProvider({"extract": {}})}, b)
+    llm.complete("extract", MSG, schema=lambda x: x)
+    llm.complete("extract", MSG, schema=lambda x: x)
+    try:
+        llm.complete("extract", MSG, schema=lambda x: x)
+        assert False, "third request should be blocked"
+    except BudgetExhausted:
+        pass
+
+
+def test_429_backoff_honours_retry_after_then_exponential():
+    sleeps = []
+    prov = Flaky([RateLimited(7), RateLimited(None), RateLimited(None)])
+    llm = LLM(settings(tiers={"small": [{"provider": "flaky", "model": "m"}]}), {"flaky": prov},
+              sleep=sleeps.append)
+    assert llm.complete("extract", MSG, schema=lambda x: x) == {"ok": 1}
+    assert sleeps == [7, 4, 8] and prov.n == 4      # retry-after wins; otherwise base*2**attempt
+
+
+def test_429_gives_up_after_max_retries_and_falls_through_chain():
+    sleeps = []
+    flaky = Flaky([RateLimited(1)] * 10)
+    s = settings(tiers={"small": [{"provider": "flaky", "model": "m"}, {"provider": "mock", "model": "m2"}]})
+    llm = LLM(s, {"flaky": flaky, "mock": MockProvider({"extract": {"from": "mock"}})}, sleep=sleeps.append)
+    assert llm.complete("extract", MSG, schema=lambda x: x) == {"from": "mock"}
+    assert flaky.n == 2 and len(sleeps) == 1                   # another entry is waiting: 1 try + 1 quick retry, then it takes over
+    only = LLM(settings(tiers={"small": [{"provider": "flaky", "model": "m"}]}),
+               {"flaky": Flaky([RateLimited(1)] * 10)}, sleep=lambda s: None)
+    try:
+        only.complete("extract", MSG, schema=lambda x: x)
+        assert False
+    except ProviderError:
+        pass
+
+
+def test_json_repair_retry_once():
+    seen = []
+    def handler(messages):
+        seen.append(len(messages))
+        return "not json at all" if len(seen) == 1 else "```json\n{\"title\": \"ok\"}\n```"
+    mock = MockProvider({"extract": handler})
+    llm = LLM(settings(), {"mock": mock})
+    out = llm.complete("extract", MSG, schema=lambda d: d if "title" in d else (_ for _ in ()).throw(ValueError("no title")))
+    assert out == {"title": "ok"} and seen == [2, 4]            # repair call carries output + error message
+
+
+def test_schema_failure_after_repair_raises_schema_error_for_that_call_only():
+    mock = MockProvider({"extract": {"wrong": 1}})
+    llm = LLM(settings(), {"mock": mock})
+    def need_title(d):
+        if "title" not in d:
+            raise ValueError("missing title")
+        return d
+    try:
+        llm.complete("extract", MSG, schema=need_title)
+        assert False
+    except SchemaError:
+        pass
+    assert len(mock.calls) == 2                                  # first try + exactly one repair
+    assert llm.complete("extract", MSG, schema=lambda d: d) == {"wrong": 1}   # next call is unaffected
+
+
+def test_text_mode_returns_raw_text_without_schema():
+    llm = LLM(settings(), {"mock": MockProvider({"write_en": "hello"})})
+    assert llm.complete("write_en", MSG) == "hello"
+
+
+def test_unknown_task_and_missing_provider_fail_clearly():
+    llm = LLM(settings(), {"mock": MockProvider()})
+    for task in ("nope",):
+        try:
+            llm.complete(task, MSG)
+            assert False
+        except Exception as e:
+            assert "unknown task" in str(e)
+    llm2 = LLM(settings(tiers={"small": [{"provider": "groq", "model": "x"}]}), {})
+    try:
+        llm2.chain("extract")
+        assert False
+    except Exception as e:
+        assert "no available provider" in str(e)
+
+
+def test_parse_json_variants():
+    assert parse_json('{"a": 1}') == {"a": 1}
+    assert parse_json('Sure! Here:\n```json\n{"a": [1, 2]}\n```\nDone') == {"a": [1, 2]}
+    assert parse_json('[{"a": 1}]') == [{"a": 1}]
+    for bad in ("", "no json", '{"a": '):
+        try:
+            parse_json(bad)
+            assert False, bad
+        except ValueError:
+            pass
+
+
+def test_logs_never_contain_prompts():
+    class H(logging.Handler):
+        def __init__(self):
+            super().__init__()
+            self.lines = []
+        def emit(self, r):
+            self.lines.append(r.getMessage())
+    h = H()
+    lg = logging.getLogger("newsbot")
+    lg.addHandler(h)
+    lg.setLevel(logging.DEBUG)
+    try:
+        secret = [{"role": "user", "content": "SECRET-DRAFT-TEXT " * 20}]
+        llm = LLM(settings(), {"mock": MockProvider({"extract": {"k": "SECRET-DRAFT-TEXT"}})})
+        llm.complete("extract", secret, schema=lambda d: d)
+    finally:
+        lg.removeHandler(h)
+    assert h.lines and not any("SECRET-DRAFT-TEXT" in x for x in h.lines)
+
+
+# ---------- providers (fake transport, no network) ----------
+
+def fake_transport(status=200, headers=None, body=None, record=None):
+    def t(method, url, *, headers=None, json=None, timeout=60):
+        if record is not None:
+            record.append({"method": method, "url": url, "headers": headers, "json": json})
+        return status, headers_out, body
+    headers_out = headers or {}
+    return t
+
+
+CHAT_OK = {"choices": [{"message": {"content": '{"ok": 1}'}}], "usage": {"prompt_tokens": 5, "completion_tokens": 3}}
+
+
+def test_workers_ai_chat_uses_the_openai_endpoint_of_ITS_account_and_sends_the_token_only_in_the_header():
+    rec = []
+    p = WorkersAIProvider("a" * 32, "tok-secret-123456", fake_transport(body=CHAT_OK, record=rec), name="cf_p1")
+    r = p.chat("@cf/openai/gpt-oss-120b", MSG, json_mode=True, max_tokens=300)
+    assert r.text == '{"ok": 1}' and r.prompt_tokens == 5 and r.completion_tokens == 3 and r.provider == "cf_p1"
+    call = rec[0]
+    assert call["url"] == "https://api.cloudflare.com/client/v4/accounts/" + "a" * 32 + "/ai/v1/chat/completions"
+    assert call["headers"]["Authorization"] == "Bearer tok-secret-123456" and "tok-secret" not in call["url"] and "tok-secret" not in str(call["json"])
+    assert call["json"]["model"] == "@cf/openai/gpt-oss-120b" and call["json"]["max_tokens"] == 300 and call["json"]["response_format"] == {"type": "json_object"}
+
+
+def test_workers_ai_understands_older_and_responses_style_answers_and_refuses_an_empty_one():
+    native = {"success": True, "result": {"response": "hello", "usage": {"prompt_tokens": 1, "completion_tokens": 1}}}
+    assert WorkersAIProvider("a", "t" * 10, fake_transport(body=native)).chat("m", MSG).text == "hello"
+    as_json = {"success": True, "result": {"response": {"k": 1}}}
+    assert json.loads(WorkersAIProvider("a", "t" * 10, fake_transport(body=as_json)).chat("m", MSG).text) == {"k": 1}
+    responses = {"output": [{"type": "reasoning", "content": [{"text": "thinking"}]}, {"type": "message", "content": [{"type": "output_text", "text": "answer"}]}]}
+    assert WorkersAIProvider("a", "t" * 10, fake_transport(body=responses)).chat("m", MSG).text == "answer"
+    empty = {"choices": [{"message": {"content": None, "reasoning_content": "all tokens spent thinking"}}]}
+    try:
+        WorkersAIProvider("a", "t" * 10, fake_transport(body=empty)).chat("m", MSG)
+        assert False
+    except ProviderError as e:
+        assert "empty" in str(e)
+
+
+def test_workers_ai_asks_again_without_an_optional_field_the_model_rejects_and_remembers_it():
+    seen = []
+
+    def t(method, url, *, headers=None, json=None, timeout=60):
+        seen.append(sorted(k for k in json if k in ("reasoning_effort", "response_format")))
+        if "reasoning_effort" in json or "response_format" in json:
+            return 400, {}, {"success": False}
+        return 200, {}, CHAT_OK
+    p = WorkersAIProvider("a", "t" * 10, t, model_params={"m": {"reasoning_effort": "low"}})
+    assert p.chat("m", MSG, json_mode=True).text == '{"ok": 1}'
+    assert seen == [["reasoning_effort", "response_format"], ["response_format"], []]       # params dropped first, then json mode
+    seen.clear()
+    p.chat("m", MSG, json_mode=True)
+    assert seen == [[]]                                                                    # remembered: no wasted calls any more
+
+
+def test_workers_ai_429_reads_retry_after_and_other_4xx_is_not_retryable_and_5xx_is():
+    try:
+        WorkersAIProvider("a", "t" * 10, fake_transport(429, {"retry-after": "7"})).chat("m", MSG)
+        assert False
+    except RateLimited as e:
+        assert e.retry_after == 7
+    for status, exc in ((401, ProviderError), (503, RateLimited)):
+        try:
+            WorkersAIProvider("a", "t" * 10, fake_transport(status)).chat("m", MSG)
+            assert False
+        except exc as e:
+            assert not (status == 401 and isinstance(e, RateLimited))
+
+
+def test_workers_ai_list_models_pages_through_the_catalogue():
+    def t(method, url, *, headers=None, json=None, timeout=60):
+        page = int(url.rsplit("page=", 1)[1])
+        names = [{"name": f"m{page}-{i}"} for i in range(100 if page == 1 else 3)]
+        return 200, {}, {"success": True, "result": names}
+    assert len(WorkersAIProvider("a", "t" * 10, t).list_models()) == 103
+
+
+def test_workers_ai_chat_and_embedder_batches():
+    calls = []
+    def t(method, url, *, headers=None, json=None, timeout=60):
+        calls.append(json)
+        if "text" in json:
+            return 200, {}, {"success": True, "result": {"data": [[1.0, 0.0] for _ in json["text"]]}}
+        return 200, {}, {"success": True, "result": {"response": "ok", "usage": {"prompt_tokens": 2, "completion_tokens": 1}}}
+    p = WorkersAIProvider("acct", "tok123456", t)
+    assert p.chat("@cf/x", MSG).text == "ok"
+    emb = WorkersAIEmbedder(p, "@cf/baai/bge-m3", batch=2)
+    vecs = emb(["a", "b", "c", "d", "e"])
+    assert len(vecs) == 5 and [len(c["text"]) for c in calls[1:]] == [2, 2, 1]
+
+
+def test_workers_ai_embedder_rejects_wrong_shape():
+    p = WorkersAIProvider("a", "tok123456", lambda *a, **k: (200, {}, {"success": True, "result": {"data": [[1.0]]}}))
+    try:
+        WorkersAIEmbedder(p, "m")(["a", "b"])
+        assert False
+    except ProviderError:
+        pass
+
+
+# ---------- health check, factory, config ----------
+
+def test_health_fails_loudly_on_unknown_model_and_hides_secrets():
+    s = settings(tiers={"small": [{"provider": "mock", "model": "ghost"}], "strong": [{"provider": "mock", "model": "m-strong"}]})
+    try:
+        check_models(s, {"mock": MockProvider(models=["m-strong"])})
+        assert False
+    except HealthCheckError as e:
+        assert "mock:ghost=MISSING" in str(e)
+    res = check_models(s, {"mock": MockProvider(models=["m-strong", "ghost"])})
+    assert all(r["status"] == "OK" for r in res)
+
+
+def test_health_skips_providers_without_keys_but_requires_each_task_to_have_one_usable():
+    s = {"tasks": {"extract": "small"}, "tiers": {"small": [{"provider": "groq", "model": "a"},
+                                                            {"provider": "mock", "model": "b"}]}}
+    res = check_models(s, {"mock": MockProvider()})
+    assert [r["status"] for r in res] == ["SKIP", "OK"]
+    try:
+        check_models(s, {})
+        assert False
+    except HealthCheckError as e:
+        assert "no usable provider" in str(e)
+
+
+def test_health_error_when_models_endpoint_unreachable():
+    class Down:
+        name = "groq"
+        def list_models(self):
+            raise ProviderError("network error: ConnectionError")
+    s = {"tasks": {"extract": "small"}, "tiers": {"small": [{"provider": "groq", "model": "a"}]}}
+    try:
+        check_models(s, {"groq": Down()})
+        assert False
+    except HealthCheckError as e:
+        assert "ERROR" in str(e)
+
+
+def test_template_llm_yaml_is_consistent():
+    s = load_llm_settings(TEMPLATE)
+    assert set(s["tasks"].values()) <= set(s["tiers"])
+    assert s["tiers"]["small"][0]["provider"] == "workers_ai" and s["embedding"]["provider"] == "workers_ai"
+    assert all(e["provider"] == "workers_ai" for tier in s["tiers"].values() for e in tier)          # one pool, no other provider
+    assert s["budget"]["stop_fraction"] == 0.9 and s["budget"]["neurons_per_day_per_account"] == 10000
+    assert s["neuron_rates"]["@cf/openai/gpt-oss-120b"]["out"] > s["neuron_rates"]["@cf/openai/gpt-oss-20b"]["out"] and "default" in s["neuron_rates"]
+    assert {e["model"] for tier in s["tiers"].values() for e in tier} <= set(s["neuron_rates"])        # every model used has a price
+    assert all(e["model"] for tier in s["tiers"].values() for e in tier)
+
+
+def test_build_llm_dry_run_uses_mock_and_no_state():
+    s = load_llm_settings(TEMPLATE)
+    mock = MockProvider({"extract": {"claims": []}})
+    llm = build_llm(s, None, dry_run=True, mock=mock)
+    assert llm.complete("extract", MSG, schema=lambda d: d) == {"claims": []}
+    assert build_embedder(s, providers={}) is None             # no Cloudflare creds -> lexical fallback
+
+
+def _pool_mock(label, answer=None):
+    m = MockProvider(answer or {"extract": {"ok": 1}})
+    m.name, m.pool = "cf_" + label, "workers_ai"
+    return m
+
+
+def test_build_llm_real_chain_uses_every_account_of_the_pool():
+    s = load_llm_settings(TEMPLATE)
+    with tempfile.TemporaryDirectory() as d:
+        a, b = _pool_mock("a"), _pool_mock("b")
+        llm = build_llm(s, d, providers={"cf_a": a, "cf_b": b})
+        assert {p for p, _ in llm.chain("extract")} == {"cf_a", "cf_b"}
+        llm.complete("extract", MSG, schema=lambda x: x)
+        usage = json.loads((Path(d) / "usage.json").read_text())
+        assert any(k.endswith("/@cf/openai/gpt-oss-20b") for k in usage["counters"])
+
+
+def test_health_cmd_fails_loudly_without_keys():
+    from newsbot.cli import health_cmd
+    import os
+    saved = {k: os.environ.pop(k, None) for k in ("NEWSBOT_CF_ACCOUNTS_FILE", "NEWSBOT_CF_ACCOUNTS", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID")}
+    try:
+        assert health_cmd(TEMPLATE) == 3
+    finally:
+        os.environ.update({k: v for k, v in saved.items() if v})

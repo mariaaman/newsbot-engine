@@ -1,0 +1,3 @@
+{{- /* true when ads are enabled in config and the page is not a policy/404 page */ -}}
+{{- $d := site.Data.site -}}
+{{- return (and $d.ads.enabled (ne .Type "policy") (ne .Kind "404")) -}}
