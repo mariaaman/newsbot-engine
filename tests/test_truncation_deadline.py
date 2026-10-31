@@ -117,4 +117,91 @@ def test_verify_asks_for_room_in_proportion_to_the_claims():
                 build_fact_sheet(Fake(), t, "st-1", [], claims(n))
             except Exception:
                 pass                                                # only the request matters here
-    assert seen == [3400, 11000, 12000]                             # 3000 + 40/claim, capped at 12000
+    assert seen == [4950, 13500, 14000]                             # 4500 + 45/claim, capped at 14000
+
+
+def test_long_answers_get_a_long_enough_http_timeout():
+    """Real log 2026-10-31: verify (max_tokens ~9000) failed on BOTH accounts with ReadTimeout after exactly 60 s."""
+    from newsbot.llm.workers_ai import WorkersAIProvider, chat_timeout
+    assert chat_timeout(1024) < chat_timeout(5000) <= chat_timeout(9200) == 240.0 == chat_timeout(14000)
+    assert chat_timeout(1024) >= 80                                  # short calls keep a comfortable margin too
+    seen = []
+
+    def transport(method, url, *, headers=None, json=None, timeout=60):
+        seen.append(timeout)
+        return 200, {}, {"choices": [{"message": {"content": "{}"}, "finish_reason": "stop"}],
+                         "usage": {"prompt_tokens": 1, "completion_tokens": 1}}
+    p = WorkersAIProvider("a" * 32, "tok", transport=transport, name="cf_a")
+    p.chat("m", [{"role": "user", "content": "hi"}], max_tokens=9200)
+    p.chat("m", [{"role": "user", "content": "hi"}], max_tokens=1000)
+    assert seen == [240.0, 85.0]
+
+
+# ---- repair edits the rejected draft instead of rewriting from scratch; thin fact sheets are not written ----
+def test_repair_request_carries_the_rejected_draft_and_asks_for_minimal_changes():
+    import copy
+    from newsbot.llm import build_llm, load_llm_settings
+    from newsbot.llm.dryrun import dry_run_provider
+    from newsbot.articles import produce_articles
+    from tests.helpers import TEMPLATE, make_cfg
+    from tests.test_m4 import STORIES
+    mock = dry_run_provider()
+    good = mock.responses["write_en"]
+    seen = []
+
+    def write(msgs):
+        art = copy.deepcopy(good(msgs))
+        seen.append([m["role"] for m in msgs])
+        if len(seen) == 1:
+            art["body_markdown"] = art["body_markdown"].replace("\n\n## ", "\n\nZorblax Quimby opened it in 2014 [S1].\n\n## ", 1)
+        return art
+    mock.responses["write_en"] = write
+    llm = build_llm(load_llm_settings(TEMPLATE), None, dry_run=True, mock=mock)
+    r = produce_articles(STORIES["ev-metro"], ["en"], make_cfg(), None, llm, recent_by_lang={"en": []})["en"]
+    assert r.qa.failures == [] and "Zorblax" not in r.article["body_markdown"]
+    assert seen[0][-1] == "user" and "assistant" not in seen[0]                    # first write: no draft
+    assert seen[1][-2:] == ["assistant", "user"]                                    # repair: draft, then the correction note
+
+
+def test_write_article_adds_the_draft_only_when_repairing():
+    from newsbot.write import write_article
+    from tests.helpers import make_cfg
+    from tests.test_m4 import STORIES, base
+    got = []
+
+    class Spy:
+        def complete(self, task, msgs, schema=None, *, max_tokens=1024):
+            got.append(msgs)
+            return base()
+    cfg, fs = make_cfg(), STORIES["ev-metro"]
+    write_article(Spy(), None, cfg, fs, "en")
+    write_article(Spy(), None, cfg, fs, "en", fix="QA REJECTED", draft={"title": "Old draft title"})
+    assert all(m["role"] != "assistant" for m in got[0])
+    assert got[1][-2]["role"] == "assistant" and "Old draft title" in got[1][-2]["content"]
+    assert got[1][-1]["content"].startswith("QA REJECTED") and "keep every other sentence" in got[1][-1]["content"]
+
+
+def test_a_story_with_too_few_facts_is_not_written_and_waits_for_more_sources():
+    import shutil
+    import tempfile
+    from pathlib import Path
+    from types import SimpleNamespace as NS
+    from newsbot.cli import FIXTURES, run_pipeline
+    from newsbot.discover import fixture_fetcher
+    from newsbot.fetch import fixture_article_fetcher
+    from tests.helpers import NOW, TEMPLATE, make_cfg
+    from tests.test_publish import _llm
+    cfg = make_cfg()
+    with tempfile.TemporaryDirectory() as d:
+        brain = Path(d) / "brain"
+        shutil.copytree(TEMPLATE, brain)
+        kw = dict(embedder=None, article_fetcher=fixture_article_fetcher(FIXTURES / "articles"),
+                  feed_fetcher=fixture_fetcher(FIXTURES / "feeds", cfg.sources))
+        ok = run_pipeline(cfg, "review", brain, now=NOW, llm=_llm(), **kw)
+        assert ok["articles"]                                                       # the fixtures normally produce articles
+        shutil.rmtree(brain)
+        shutil.copytree(TEMPLATE, brain)
+        cfg.research = NS(**{**vars(cfg.research), "min_facts_to_write": 10_000}) if hasattr(cfg, "research") else NS(min_facts_to_write=10_000)
+        thin = run_pipeline(cfg, "review", brain, now=NOW, llm=_llm(), **kw)
+        assert not thin["articles"]                                                 # nothing was written, no LLM write cost
+        assert any("facts:insufficient_sources" in x.reason for x in thin["decisions"])

@@ -15,6 +15,13 @@ from newsbot.llm.http import raise_for_status, requests_transport
 API = "https://api.cloudflare.com/client/v4"   # VERIFY
 
 
+def chat_timeout(max_tokens: int) -> float:
+    """Seconds to wait for ONE non-streaming answer. A fixed 60 s cut off long answers (gpt-oss-120b writes roughly
+    80-100 tokens a second, so 5000+ tokens need more than a minute): the request failed with ReadTimeout on every account
+    and the story with it. Grows with the answer size; capped so a hung connection cannot stall the run for long."""
+    return float(min(240.0, 45.0 + max_tokens / 25.0))
+
+
 def _text_of(data) -> str | None:
     """The answer text from an OpenAI-style reply, or (older / native shapes) result.response / a Responses-style output."""
     if not isinstance(data, dict):
@@ -78,7 +85,7 @@ class WorkersAIProvider:
             if json_mode and "json" not in dropped:
                 body["response_format"] = {"type": "json_object"}
             status, headers, data = self._t("POST", f"{API}/accounts/{self._acct}/ai/v1/chat/completions",
-                                            headers=self._h(), json=body)
+                                            headers=self._h(), json=body, timeout=chat_timeout(max_tokens))
             if status == 400:                         # a model that rejects an OPTIONAL field: stop sending it, ask again
                 if extra:
                     dropped.add("params")

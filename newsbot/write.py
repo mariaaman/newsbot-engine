@@ -219,11 +219,17 @@ def map_category(category: str, allowed) -> str:
 
 
 def write_article(llm, brain, cfg, fs: FactSheet, lang: str, previous: dict | None = None, *,
-                  fix: str | None = None) -> tuple[dict, int]:
+                  fix: str | None = None, draft: dict | None = None) -> tuple[dict, int]:
     """Returns (normalised article dict, number of sanitiser removals).
     fix: one repair note (what the QA gates rejected) appended to the request for the single repair attempt.
     Raises BudgetExhausted / LLMError; the caller fails this language only."""
     msgs = build_messages(fs, lang, cfg, brain, previous)
+    if fix and draft:
+        # Repair = EDIT the rejected draft. Without it the model rewrites from scratch, fixes one problem and invents
+        # others (logs 2026-10-31: unsupported numbers/names survived two rewrites, one rewrite even got shorter and failed
+        # min_words). The draft is shown as the model's own earlier answer; the note says what to change and to keep the rest.
+        msgs.append({"role": "assistant", "content": json.dumps(draft, ensure_ascii=False)})
+        fix = fix + "\nChange ONLY what is needed to fix these points and keep every other sentence as it is."
     if fix:
         msgs.append({"role": "user", "content": fix})
     raw = llm.complete(f"write_{lang}", msgs, schema=validate_article, max_tokens=cfg.write.max_tokens)

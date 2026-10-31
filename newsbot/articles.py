@@ -126,7 +126,7 @@ def _repair(llm, brain, cfg, fs, lang, art, qa, recent, embedder, est, prev, now
            and llm.can_run(f"write_{lang}", est)):
         note = repair_note(best_qa.failures, best_art, fs, lang, cfg, best_qa)
         try:
-            art2, _ = write_article(llm, brain, cfg, fs, lang, prev, fix=note)
+            art2, _ = write_article(llm, brain, cfg, fs, lang, prev, fix=note, draft=best_art)
         except (BudgetExhausted, LLMError):
             break
         if prev is not None:

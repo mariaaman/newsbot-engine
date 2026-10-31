@@ -55,7 +55,7 @@ class LimitsCfg(_Base):
     routing_min_orgs: int = Field(2, ge=1)
     # Wall-clock limit for the engine step. The hourly job is killed at 30 minutes and then nothing is committed, so the run
     # stops starting LLM work after this many minutes, queues what is left and commits the rest.
-    max_run_minutes: float = Field(22, ge=5, le=27)
+    max_run_minutes: float = Field(20, ge=5, le=27)
     max_new_per_run: int = Field(1, ge=1)            # a full article costs minutes and many tokens; the rest wait for the next hour
     max_item_age_hours: float = Field(48, gt=0)       # feed items older than this are ignored
     max_items_per_feed: int = Field(40, ge=1)         # newest N per feed, so one big feed cannot crowd out the others
@@ -99,6 +99,9 @@ class ResearchCfg(_Base):
     window_hours: float = Field(48, gt=0)
     source_chars: int = Field(6000, ge=1000, le=30000)  # chars of each source page kept for extraction
     claims_per_source: int = Field(25, ge=5, le=60)
+    # A fact sheet with fewer facts cannot fill min_words honestly: the writer pads with invented names and figures, the gates
+    # reject it, and ~6 expensive calls are wasted (logs 2026-10-31: 10 facts, 1 confirmed). The story waits for more sources.
+    min_facts_to_write: int = Field(12, ge=0)
 
 
 class ScoringCfg(_Base):

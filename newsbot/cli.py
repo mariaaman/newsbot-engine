@@ -194,6 +194,12 @@ def gather_story_facts(decisions, scored, cfg, brain: Path, mode: str, llm, arti
             continue
         cluster = expand(by_id[d.story_id]) if expand else by_id[d.story_id]       # research: related coverage
         fs, status = gather_facts(cluster, cfg, brain, llm, fetcher)
+        need = getattr(getattr(cfg, "research", None), "min_facts_to_write", 0)
+        if fs is not None and not dry and len(fs.facts) < need:
+            # too thin to fill min_words honestly: the writer would pad with invented names/figures and burn ~6 calls for a
+            # draft the gates reject. Wait for more sources instead (same cool-down as "insufficient_sources").
+            log.info("facts story=%s too_thin facts=%d need=%d", d.story_id, len(fs.facts), need)
+            fs, status = None, "insufficient_sources"
         if status == "insufficient_sources" and hours > 0:
             cooldowns[d.story_id] = now + timedelta(hours=hours)
         else:
