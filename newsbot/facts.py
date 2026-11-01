@@ -31,10 +31,15 @@ def _extract_one(llm, brain, source, per_source: int):
         return extract_claims(llm, brain, short, max(5, per_source * 2 // 3))
 
 
+from newsbot.diag import DIAG  # noqa: E402
+
+
 def gather_facts(cluster: Cluster, cfg, brain, llm, fetcher: Fetcher, version: int = 1) -> tuple[FactSheet | None, str]:
     """Returns (fact_sheet, status) where status is ok | insufficient_sources | queued_budget | llm_failed."""
     sources = fetch_sources(cluster, cfg, fetcher)
-    if len({org_key(s.domain) for s in sources}) < MIN_SOURCES:
+    orgs = len({org_key(s.domain) for s in sources})
+    if orgs < MIN_SOURCES:
+        DIAG.add("facts", why=f"only {orgs} organisation(s) could be fetched, need {MIN_SOURCES}")
         return None, "insufficient_sources"
     est = sum(len(s.text) for s in sources) // 2 + 1500 * len(sources)     # rough, conservative
     if not (llm.can_run("extract", est) and llm.can_run("verify", est)):
@@ -50,9 +55,12 @@ def gather_facts(cluster: Cluster, cfg, brain, llm, fetcher: Fetcher, version: i
             except LLMError as e:                       # one bad source must not sink the story: skip it, go on
                 failed += 1
                 log.warning("extract skipped source=%s error=%s reason=%s", s.id, type(e).__name__, safe_reason(e))
+                DIAG.add("extract", source=s.id, domain=s.domain, failed=True, reason=f"{type(e).__name__}:{safe_reason(e)}")
         if not claims:
+            DIAG.add("facts", why=f"no claims extracted ({failed} source(s) failed in the LLM)")
             return None, ("llm_failed" if failed else "insufficient_sources")
         if len({org_key(s.domain) for s in sources if any(c.source_id == s.id for c in claims)}) < MIN_SOURCES:
+            DIAG.add("facts", why="fewer than two organisations contributed claims")
             return None, "insufficient_sources"         # the remaining pages cover fewer than two organisations
         fs = build_fact_sheet(llm, brain, cluster.story_id, sources, claims, version)
         fs.source_texts = {s.id: s.text for s in sources}      # in memory only (QA overlap check); not saved
@@ -61,6 +69,7 @@ def gather_facts(cluster: Cluster, cfg, brain, llm, fetcher: Fetcher, version: i
         return None, "queued_budget"
     except LLMError as e:
         log.warning("facts failed story=%s error=%s", cluster.story_id, type(e).__name__)
+        DIAG.add("facts", why=f"LLM error {type(e).__name__}: {safe_reason(e)}")
         return None, "llm_failed"
 
 

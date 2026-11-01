@@ -18,6 +18,7 @@ from newsbot.models import Cluster, Item, Source, iso
 from newsbot.prompts import strip_injection
 
 log = logging.getLogger("newsbot.fetch")
+from newsbot.diag import DIAG  # noqa: E402
 from newsbot.netsafe import safe_get, user_agent    # noqa: E402  (agent string is built per call, redirects are checked)
 MAX_CHARS = 6000
 MAX_BYTES = 1_500_000
@@ -177,20 +178,25 @@ def fetch_sources(cluster: Cluster, cfg, fetcher: Fetcher, min_chars: int = 150)
         try:
             if not robots.allowed(it.url):
                 log.info("robots disallow domain=%s", it.domain)
+                DIAG.add("fetch", domain=it.domain, outcome="robots_disallow")
                 continue
             r = fetcher(it.url)
         except OSError as e:
             log.info("fetch failed domain=%s error=%s", it.domain, type(e).__name__)
+            DIAG.add("fetch", domain=it.domain, outcome=f"error:{type(e).__name__}:{e}"[:80])
             continue
         if r.status != 200 or not re.search(r"html|xml|text", r.content_type, re.I):
             log.info("fetch skipped domain=%s status=%d", it.domain, r.status)
+            DIAG.add("fetch", domain=it.domain, outcome=f"http_{r.status}")
             continue
         text, removed = strip_injection(extract_text(decode_body(r.body, r.content_type), chars))
         if removed:
             log.warning("injection-like sentences removed domain=%s count=%d", it.domain, removed)
         if len(text) < min_chars:
-            log.info("extract too short domain=%s", it.domain)
+            log.info("extract too short domain=%s chars=%d", it.domain, len(text))
+            DIAG.add("fetch", domain=it.domain, outcome="too_short", chars=len(text))
             continue
+        DIAG.add("fetch", domain=it.domain, outcome="ok", chars=len(text), injection_removed=removed)
         sources.append(Source(f"S{len(sources) + 1}", it.source_name, it.tier, it.url, it.domain, it.lang,
                               iso(it.published), text))
     return sources

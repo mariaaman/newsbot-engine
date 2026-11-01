@@ -79,6 +79,9 @@ def run_pipeline(cfg: "Config", mode: str, brain: Path, now=None, embedder=None,
     dry = mode == "dry-run"
     now = now or (DRY_RUN_NOW if dry else utcnow())     # dry-run lives on the fixtures' clock, or every sample story looks old
     effective = mode          # the CLI/workflow mode wins; publish.mode in config is only the default for the workflow
+    from newsbot.diag import DIAG
+    if not dry:
+        DIAG.start(effective, utcnow().isoformat() if now is None else now.isoformat())
     log.info("run start mode=%s sources=%d", effective, len(cfg.sources))
     shared_budget = None
     if embedder is None and not dry:   # Workers AI multilingual embeddings when credentials exist
@@ -116,11 +119,14 @@ def run_pipeline(cfg: "Config", mode: str, brain: Path, now=None, embedder=None,
     if vectors and not dry:
         from newsbot.research import make_expander
         expand = make_expander(items, clusters, vectors, cfg)
+    DIAG.mark("discover_score")
     factsheets = gather_story_facts(decisions, scored, cfg, brain, mode, llm, article_fetcher, state_dir, now,
                                     expand=expand) if llm else {}
+    DIAG.mark("facts")
     if report is not None and any("facts:run_time_limit" in d.reason or "queued_budget" in d.reason for d in decisions):
         report.add("facts", "skip", "run time or LLM limit reached: the story is queued for the next run")
     articles = write_story_articles(decisions, factsheets, cfg, brain, mode, llm, embedder, now)
+    DIAG.mark("write_qa")
     if not dry and articles:
         from newsbot.publish import record_new_stories
         record_new_stories(state_dir, decisions, {s.cluster.story_id: s.cluster for s in scored}, factsheets,
@@ -131,6 +137,9 @@ def run_pipeline(cfg: "Config", mode: str, brain: Path, now=None, embedder=None,
     n = {a: sum(d.action == a for d in decisions) for a in ("NEW", "UPDATE", "SKIP")}
     log.info("run done items=%d stories=%d new=%d update=%d skip=%d feeds_failed=%d", len(items),
              len(clusters), n["NEW"], n["UPDATE"], n["SKIP"], stats["feeds_failed"])
+    DIAG.mark("publish_updates")
+    if DIAG.active:
+        log.info(DIAG.public_summary())
     if report is not None:
         from newsbot.report import record_run
         record_run(report, mode=effective, stats=stats, n_stories=len(clusters), decisions=decisions,
@@ -193,6 +202,8 @@ def gather_story_facts(decisions, scored, cfg, brain: Path, mode: str, llm, arti
             log.info("facts story=%s status=cooldown", d.story_id)
             continue
         cluster = expand(by_id[d.story_id]) if expand else by_id[d.story_id]       # research: related coverage
+        from newsbot.diag import DIAG
+        DIAG.story = d.story_id
         fs, status = gather_facts(cluster, cfg, brain, llm, fetcher)
         need = getattr(getattr(cfg, "research", None), "min_facts_to_write", 0)
         if fs is not None and not dry and len(fs.facts) < need:
@@ -205,7 +216,8 @@ def gather_story_facts(decisions, scored, cfg, brain: Path, mode: str, llm, arti
         else:
             cooldowns.pop(d.story_id, None)
         d.reason = f"{d.reason}|facts:{status}"
-        log.info("facts story=%s status=%s", d.story_id, status)
+        log.info("facts story=%s status=%s facts=%d", d.story_id, status, len(fs.facts) if fs is not None else 0)
+        DIAG.add("facts", status=status, decision=d.reason)
         if fs is not None:
             out[d.story_id] = fs
             if not dry:
@@ -354,6 +366,9 @@ def _main(argv: list[str] | None = None) -> int:
         raise
     finally:
         report.save(args.report)
+        if args.mode != "dry-run":
+            from newsbot.diag import DIAG
+            DIAG.write(brain)
     return 0
 
 

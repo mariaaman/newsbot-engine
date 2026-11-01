@@ -97,5 +97,7 @@ def extract_claims(llm, brain, source: Source, max_claims: int = MAX_CLAIMS) -> 
             claims.append(Claim(f"{source.id}.C{len(claims) + 1}", source.id, c["kind"], c["text"]))
         else:
             dropped += 1
-    log.info("extract source=%s claims=%d dropped=%d", source.id, len(claims), dropped)
+    log.info("extract source=%s claims=%d dropped=%d chars=%d", source.id, len(claims), dropped, len(source.text))
+    from newsbot.diag import DIAG
+    DIAG.add("extract", source=source.id, domain=source.domain, claims=len(claims), dropped=dropped, chars=len(source.text))
     return claims

@@ -10,6 +10,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
+from newsbot.diag import DIAG  # noqa: E402  (run diagnostics; public logs get codes/counts only)
+
 log = logging.getLogger("newsbot.llm")
 MAX_RETRY_TOKENS = 14000      # the most a cut-off answer is given on its second try
 
@@ -242,22 +244,33 @@ class LLM:
             prov = self.providers[pname]
             msgs = list(messages)
             tokens_out = max_tokens                 # may grow once if the answer was cut off (see below)
+            t_call = self._clock()
             # another entry is waiting behind this one: give up on a 429 quickly and let it take over
             retries = self.max_retries if pos == len(chain) - 1 else min(1, self.max_retries)
             try:
                 for repair in (False, True):
+                    t_call = self._clock()
                     resp = self._call(prov, model, msgs, want_json, tokens_out, task, retries)
+                    secs = self._clock() - t_call
                     self.picker.warm(pname)
                     if self.budget:
                         self.budget.record(pname, model, resp.total_tokens or est,
                                            prompt=resp.prompt_tokens, completion=resp.completion_tokens)
-                    log.info("llm task=%s provider=%s model=%s tokens=%d", task, pname, model, resp.total_tokens)
+                    log.info("llm task=%s provider=%s model=%s tokens=%d secs=%.0f finish=%s", task, pname, model,
+                             resp.total_tokens, secs, resp.finish_reason or "-")
                     if not want_json:
+                        DIAG.add("llm", task=task, provider=pname, model=model, ok=True, tokens=resp.total_tokens,
+                                 secs=round(secs, 1), finish=resp.finish_reason)
                         return resp.text
                     try:
-                        return validate(parse_json(resp.text), schema)
+                        out = validate(parse_json(resp.text), schema)
+                        DIAG.add("llm", task=task, provider=pname, model=model, ok=True, tokens=resp.total_tokens,
+                                 secs=round(secs, 1), finish=resp.finish_reason)
+                        return out
                     except (ValueError, TypeError) as e:  # JSONDecodeError and pydantic ValidationError are ValueErrors
                         last = SchemaError(f"invalid output for task {task}: {type(e).__name__}")
+                        DIAG.add("llm", task=task, provider=pname, model=model, ok=False, tokens=resp.total_tokens,
+                                 secs=round(secs, 1), finish=resp.finish_reason, reason=f"invalid_output:{type(e).__name__}")
                         if repair:
                             break
                         if resp.finish_reason == "length":
@@ -288,7 +301,10 @@ class LLM:
                 self.picker.cool(pname)
                 if self.budget and hasattr(self.budget, "record_failure"):
                     self.budget.record_failure(pname, model, safe_reason(e))
-                log.warning("provider failed task=%s provider=%s reason=%s, trying next", task, pname, safe_reason(e))
+                log.warning("provider failed task=%s provider=%s reason=%s secs=%.0f, trying next", task, pname,
+                            safe_reason(e), self._clock() - t_call)
+                DIAG.add("llm", task=task, provider=pname, model=model, ok=False, secs=round(self._clock() - t_call, 1),
+                         reason=safe_reason(e))
                 continue
         if not tried:
             raise BudgetExhausted(f"daily LLM budget reached for task {task}")

@@ -9,7 +9,9 @@ from pathlib import Path
 
 import yaml
 
+from newsbot.diag import DIAG, detail_counts
 from newsbot.llm import BudgetExhausted, LLMError
+from newsbot.llm.base import safe_reason
 from newsbot.models import FactSheet, utcnow
 from newsbot.qa import QAResult, offending_terms, run_gates
 from newsbot.state import _atomic_write
@@ -117,6 +119,27 @@ def repair_note(failures: list[str], art: dict, fs, lang: str, cfg, qa) -> str:
     return "\n".join(lines)
 
 
+def _note_gate(fs, lang: str, stage: str, art: dict, qa) -> None:
+    """One gate result: counts and codes to the public log; the offending names/numbers and unsupported claims (text from the
+    draft) only to the private diagnostics file."""
+    log.info("gate story=%s lang=%s stage=%s verdict=%s failures=%s review=%s counts=%s", fs.story_id, lang, stage,
+             "FAIL" if qa.failures else "PASS", ",".join(qa.failures) or "-", ",".join(qa.review) or "-",
+             detail_counts(qa.details) or "-")
+    if not DIAG.active:
+        return
+    data: dict = {"lang": lang, "stage": stage, "failures": list(qa.failures), "review": list(qa.review)}
+    try:
+        if set(qa.failures) & {"unsupported_name", "unsupported_number", "confirmed_unsupported_number"}:
+            names, numbers = offending_terms(art, fs)
+            data["offending"] = {"names": names, "numbers": numbers}
+        if qa.details.get("unsupported_claims"):
+            data["unsupported"] = qa.details["unsupported_claims"]
+        data["details"] = {k: v for k, v in qa.details.items() if k != "unsupported_claims"}
+    except Exception:
+        pass
+    DIAG.add("gate", story=fs.story_id, **data)
+
+
 def _repair(llm, brain, cfg, fs, lang, art, qa, recent, embedder, est, prev, now):
     """Up to qa.max_repair_attempts rewrites. Each rewrite is graded by ALL gates again (including the LLM fact check);
     a rewrite is kept when it has no more failures than the draft before it. Returns (article, qa, attempts)."""
@@ -134,6 +157,7 @@ def _repair(llm, brain, cfg, fs, lang, art, qa, recent, embedder, est, prev, now
             art2 = finalize_update(art2, prev, lang, now or utcnow())
         qa2 = run_gates(art2, fs, lang, cfg, recent=recent, embedder=embedder, llm=llm, brain=brain, previous=prev)
         tried += 1
+        _note_gate(fs, lang, f"repair{tried}", art2, qa2)
         log.info("repair story=%s lang=%s try=%d before=%s after=%s", fs.story_id, lang, tried,
                  ",".join(best_qa.failures), ",".join(qa2.failures) or "-")
         # keep a rewrite only if it is strictly better, or equally good and still cureable: a rewrite must never swap a
@@ -149,18 +173,22 @@ def produce_articles(fs: FactSheet, languages: list[str], cfg, brain, llm, *, em
     """previous: lang -> currently published article (update flow); languages without an entry are written fresh."""
     results: dict[str, ArticleResult] = {}
     for lang in languages:
+        DIAG.story = fs.story_id                      # LLM calls below belong to this story in the run report
         est = estimate_write_tokens(fs, lang, cfg, brain, previous.get(lang) if previous else None)
         try:
             if not llm.can_run(f"write_{lang}", est):
                 results[lang] = ArticleResult(lang, "queued_budget")
+                DIAG.add("article", story=fs.story_id, lang=lang, status="queued_budget", why="daily LLM budget cannot cover the write")
                 continue
             art, removed = write_article(llm, brain, cfg, fs, lang, previous.get(lang) if previous else None)
-        except BudgetExhausted:
+        except BudgetExhausted as e:
             results[lang] = ArticleResult(lang, "queued_budget")
+            DIAG.add("article", story=fs.story_id, lang=lang, status="queued_budget", why=safe_reason(e))
             continue
         except LLMError as e:
             log.warning("write failed story=%s lang=%s error=%s", fs.story_id, lang, type(e).__name__)
             results[lang] = ArticleResult(lang, "write_failed")
+            DIAG.add("article", story=fs.story_id, lang=lang, status="write_failed", why=f"{type(e).__name__}: {safe_reason(e)}")
             continue
         prev = previous.get(lang) if previous else None
         if prev is not None:
@@ -170,9 +198,14 @@ def produce_articles(fs: FactSheet, languages: list[str], cfg, brain, llm, *, em
         if recent is None:
             recent = load_recent_articles(brain, lang, cfg.qa.recent_articles_checked)
         qa = run_gates(art, fs, lang, cfg, recent=recent, embedder=embedder, llm=llm, brain=brain, previous=prev)
+        _note_gate(fs, lang, "draft", art, qa)
+        if qa.failures and not set(qa.failures) <= REPAIRABLE:
+            DIAG.add("repair", story=fs.story_id, lang=lang, skipped="not repairable: " + ",".join(sorted(set(qa.failures) - REPAIRABLE)))
         if qa.failures and set(qa.failures) <= REPAIRABLE:
             art, qa, _ = _repair(llm, brain, cfg, fs, lang, art, qa, recent, embedder, est, prev, now)
         results[lang] = ArticleResult(lang, qa.disposition, art, qa)
+        DIAG.add("article", story=fs.story_id, lang=lang, status=qa.disposition,
+                 words=len(art.get("body_markdown", "").split()), title_chars=len(art.get("title", "")))
         log.info("article story=%s lang=%s status=%s failures=%s review=%s sanitized=%d", fs.story_id, lang,
                  qa.disposition, ",".join(qa.failures) or "-", ",".join(qa.review) or "-", removed)
     return results
@@ -193,6 +226,10 @@ def write_outputs(brain: str | Path, fs: FactSheet, results: dict[str, ArticleRe
             rel = Path("pending") / lang / f"{r.article['slug']}.md"
             extra = {"pending": {"failures": r.qa.failures, "review": r.qa.review,
                                  "unsupported": r.qa.details.get("unsupported_claims", {}).get("unsupported", [])}}
+            if set(r.qa.failures) & {"unsupported_name", "unsupported_number", "confirmed_unsupported_number"}:
+                # for the human who opens the draft (the brain repo is private); the public run logs still carry counts only
+                names, numbers = offending_terms(r.article, fs)
+                extra["pending"]["offending"] = {"names": names, "numbers": numbers}
         _atomic_write(Path(brain) / rel, to_markdown_file(r.article, fs, lang, now, extra=extra,
                                                        published=(published_dates or {}).get(lang) or None))
         r.path = str(rel)

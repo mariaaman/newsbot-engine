@@ -130,4 +130,7 @@ def build_fact_sheet(llm, brain, story_id: str, sources: list[Source], claims: l
     cited = {s for f in facts for s in f.source_ids}
     log.info("verify story=%s facts=%d confirmed=%d disputed=%d fragments_dropped=%d", story_id, len(facts),
              sum(f.status == "confirmed" for f in facts), sum(f.status == "disputed" for f in facts), dropped)
+    from newsbot.diag import DIAG
+    DIAG.add("verify", facts=len(facts), confirmed=sum(f.status == "confirmed" for f in facts),
+             disputed=sum(f.status == "disputed" for f in facts), fragments_dropped=dropped, claims_in=len(claims))
     return FactSheet(story_id, version, facts, [s.public_dict() for s in sources if s.id in cited])
