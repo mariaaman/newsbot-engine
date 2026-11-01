@@ -1,7 +1,6 @@
 """Run diagnostics: public logs get codes/counts/timings; names, figures and claims go only to the private brain."""
 import copy
 import json
-import logging
 import shutil
 import tempfile
 from pathlib import Path
@@ -87,18 +86,10 @@ def test_a_real_run_writes_the_private_report_and_keeps_names_out_of_the_public_
         art = copy.deepcopy(good(msgs))
         art["body_markdown"] = art["body_markdown"].replace("\n\n## ", "\n\nZorblax Quimby opened it in 2014 [S1].\n\n## ", 1)
         return art
-    records: list[str] = []
-
-    class H(logging.Handler):
-        def emit(self, r):
-            records.append(r.getMessage())
-    h = H()
-    logging.getLogger().addHandler(h)
-    logging.getLogger().setLevel(logging.INFO)
-    try:
+    from tests.test_m8 import capture_logs, log_lines
+    with capture_logs() as cap:                  # attaches to the "newsbot" logger: works even after main() set propagate=False
         r, brain = _real_run(bad)
-    finally:
-        logging.getLogger().removeHandler(h)
+    records = log_lines(cap)
     DIAG.write(brain)
     md = (brain / "state/diagnostics/last_run.md").read_text(encoding="utf-8")
     for needle in ("**fetch**", "**extract**", "**verify**", "**llm**", "**gate**", "**article**", "offending"):

@@ -21,9 +21,11 @@ class LLMError(Exception):
 
 
 class RateLimited(LLMError):
-    def __init__(self, retry_after: float | None = None):
+    def __init__(self, retry_after: float | None = None, kind: str = "rate", code: int | None = None):
         super().__init__("rate limited")
         self.retry_after = retry_after
+        self.kind = kind          # "rate" (per minute) | "capacity" (provider busy) | "daily" (free allowance spent until 00:00 UTC)
+        self.code = code          # the API's numeric error code, when it sent one
 
 
 def safe_reason(e: Exception) -> str:
@@ -174,6 +176,8 @@ class LLM:
         self.picker = picker or PoolPicker(budget)
         self._clock = clock
         self.deadline: float | None = None
+        self._rl_streak = 0                  # consecutive calls that failed ONLY because every account was rate limited
+        self._rl_block_until = 0.0
 
     # ---- run time limit: the hourly job is killed at 30 minutes and then NOTHING is committed, so the run must end by itself ----
     def set_deadline(self, at: float | None) -> None:
@@ -214,12 +218,19 @@ class LLM:
             try:
                 return prov.chat(model, messages, json_mode=json_mode, max_tokens=max_tokens, task=task)
             except RateLimited as e:
+                if e.kind == "daily":
+                    # the account's free allowance is spent: waiting cannot help before 00:00 UTC. Remember it for the day so
+                    # no later call (or run) wastes time on this account.
+                    if self.budget is not None and hasattr(self.budget, "mark_spent"):
+                        self.budget.mark_spent(prov.name)
+                    raise ProviderError("daily allowance spent") from e
                 if attempt == retries:
-                    raise ProviderError("rate limited after retries") from e
+                    raise ProviderError(f"rate limited after retries {e.kind}") from e
                 wait = min(e.retry_after if e.retry_after is not None else delay, self.max_delay)
                 if self.time_left() < wait + 45:                  # waiting would eat the time the run needs to commit its work
                     raise BudgetExhausted("run time limit reached while rate limited") from e
-                log.warning("429 task=%s provider=%s attempt=%d wait=%.1fs", task, prov.name, attempt + 1, wait)
+                log.warning("429 task=%s provider=%s attempt=%d wait=%.1fs kind=%s code=%s", task, prov.name, attempt + 1, wait,
+                            e.kind, e.code if e.code is not None else "-")
                 self._sleep(wait)
                 delay = min(delay * 2, self.max_delay)
         raise ProviderError("unreachable")
@@ -233,6 +244,9 @@ class LLM:
         tried = False
         if self.time_left() < 45:
             raise BudgetExhausted(f"run time limit reached before task {task}")
+        if self._clock() < self._rl_block_until:       # every account just proved rate limited: queue instead of waiting again
+            raise BudgetExhausted(f"all accounts rate limited for task {task}")
+        rl_only = True                                  # did every attempt of this call fail on a rate limit?
         chain = self.chain(task)
         bad_models: set[str] = set()        # a model whose answer failed the schema twice is not retried on other accounts
         for pos, (pname, model) in enumerate(chain):
@@ -253,6 +267,7 @@ class LLM:
                     resp = self._call(prov, model, msgs, want_json, tokens_out, task, retries)
                     secs = self._clock() - t_call
                     self.picker.warm(pname)
+                    rl_only, self._rl_streak = False, 0
                     if self.budget:
                         self.budget.record(pname, model, resp.total_tokens or est,
                                            prompt=resp.prompt_tokens, completion=resp.completion_tokens)
@@ -298,6 +313,8 @@ class LLM:
                 continue
             except ProviderError as e:
                 last = e
+                if not isinstance(e.__cause__, RateLimited):
+                    rl_only = False
                 self.picker.cool(pname)
                 if self.budget and hasattr(self.budget, "record_failure"):
                     self.budget.record_failure(pname, model, safe_reason(e))
@@ -308,4 +325,9 @@ class LLM:
                 continue
         if not tried:
             raise BudgetExhausted(f"daily LLM budget reached for task {task}")
+        if rl_only:
+            self._rl_streak += 1
+            if self._rl_streak >= 2:      # twice in a row every account was rate limited: stop asking for a while
+                self._rl_block_until = self._clock() + 300
+                log.warning("all accounts rate limited %d calls in a row: no LLM calls for 5 minutes", self._rl_streak)
         raise last or LLMError("all providers failed")

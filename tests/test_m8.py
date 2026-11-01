@@ -327,7 +327,8 @@ ALLOWED_KEYS = {"articles", "claims", "closed", "confirmed", "count", "disputed"
                 "reason", "fragments_dropped", "attached", "orgs_now",
                 "task", "tokens", "update", "updates_applied", "updates_rejected",
                 # run diagnostics (reviewed: durations, counts, finish codes and gate codes only, never draft/source text)
-                "secs", "finish", "chars", "verdict", "counts", "stage", "llm_calls", "ok", "failed", "llm_secs", "stages"}
+                "secs", "finish", "chars", "verdict", "counts", "stage", "llm_calls", "ok", "failed", "llm_secs", "stages",
+                "kind", "code"}
 SECRETS = {"GROQ_API_KEY": "gsk_TESTSECRETvalue0123456789", "CLOUDFLARE_API_TOKEN": "cf-TESTSECRET-token-0123456789",
            "BRAIN_REPO_TOKEN": "github_pat_TESTSECRET0123456789", "GEMINI_API_KEY": "AIzaTESTSECRET0123456789"}
 

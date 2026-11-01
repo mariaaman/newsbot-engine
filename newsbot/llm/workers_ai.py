@@ -10,9 +10,37 @@ import json
 import time
 
 from newsbot.llm.base import PoolPicker, ProviderError, RateLimited, Response, estimate_tokens, expand_pool
-from newsbot.llm.http import raise_for_status, requests_transport
+from newsbot.llm.http import raise_for_status, requests_transport, retry_after_s
 
 API = "https://api.cloudflare.com/client/v4"   # VERIFY
+
+
+def error_info(data) -> tuple[str, int | None]:
+    """(kind, API error code) of a failed Workers AI reply. kind: "daily" = the free daily allowance is spent (cannot clear
+    before 00:00 UTC), "capacity" = the platform is busy, "rate" = too many requests per minute. Only these words and a number
+    are ever logged, never the message text."""
+    code, text = None, ""
+    try:
+        errs = data.get("errors") if isinstance(data, dict) else None
+        if isinstance(errs, list):
+            for e in errs:
+                if isinstance(e, dict):
+                    if code is None and isinstance(e.get("code"), int):
+                        code = e["code"]
+                    text += " " + str(e.get("message", "")).lower()
+    except Exception:
+        pass
+    if "daily free allocation" in text or "4006" in text or ("daily" in text and "neuron" in text):
+        return "daily", code
+    if code == 3040 or "capacity" in text:
+        return "capacity", code
+    return "rate", code
+
+
+def _raise_429(status: int, headers: dict, data) -> None:
+    if status == 429:
+        kind, code = error_info(data)
+        raise RateLimited(retry_after_s(headers), kind=kind, code=code)
 
 
 def chat_timeout(max_tokens: int) -> float:
@@ -70,6 +98,7 @@ class WorkersAIProvider:
     def _run(self, model: str, body: dict) -> dict:
         status, headers, data = self._t("POST", f"{API}/accounts/{self._acct}/ai/run/{model}",
                                         headers=self._h(), json=body)
+        _raise_429(status, headers, data)
         raise_for_status(status, headers)
         if not isinstance(data, dict) or not data.get("success", True):
             raise ProviderError("workers ai call failed")
@@ -93,6 +122,7 @@ class WorkersAIProvider:
                 if "response_format" in body:
                     dropped.add("json")
                     continue
+            _raise_429(status, headers, data)
             raise_for_status(status, headers)
             break
         if isinstance(data, dict) and data.get("success") is False:

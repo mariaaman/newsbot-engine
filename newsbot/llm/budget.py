@@ -138,6 +138,19 @@ class Budget:
             self.errors[provider] = {"reason": str(reason)[:60], "at": self._now().astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
             self.save()
 
+    def mark_spent(self, provider: str) -> None:
+        """The API itself said this account's daily allowance is spent (our own counting can under-estimate: timed-out calls and
+        other tools use neurons we never see). Count it as fully used until the day rolls over, so every later call and run
+        skips it at once instead of waiting on it."""
+        with self._lock:
+            self._roll()
+            cap = self.neuron_cap(provider)
+            c = self.counters.setdefault(f"{provider}/_spent", {"tokens": 0, "requests": 0})
+            c["neurons"] = max(c.get("neurons", 0), float(cap or 0) + 1)
+            self.errors[provider] = {"reason": "daily_allowance_spent",
+                                     "at": self._now().astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+            self.save()
+
     def used_fraction(self, provider: str, model: str) -> float | None:
         hit = self._limit(self.token_limits, provider, model)
         return None if not hit or not hit[1] else self._used(hit[0], "tokens") / hit[1]
