@@ -1,6 +1,6 @@
 // NewsBot Control: the whole dashboard UI. Talks only to this Worker's /api/*; secrets are write-only; the brain repo on GitHub is the database.
 import {
-  h, $, flat, api, guard, toast, errorCard, ApiError, LANGS, DEFAULT_LANG, REQUIRED_SECRETS, RAW_FILES, WORKFLOW_LABELS, MSG,
+  h, $, flat, api, guard, toast, errorCard, ApiError, LANGS, DEFAULT_LANG, loadLangs, REQUIRED_SECRETS, RAW_FILES, WORKFLOW_LABELS, MSG,
   fmtTime, ago, num, runChip, titleOf, pendingOf, parsePending, reasonLabel,
 } from "./lib.js";
 
@@ -26,6 +26,8 @@ async function route() {
   setNav(name === "draft" ? "drafts" : name === "article" ? "articles" : name === "llm" ? "keys" : name);
   view.replaceChildren(h("p", { class: "muted" }, "লোড হচ্ছে…"));
   try {
+    await loadLangs();
+    if (!LANGS.some(([c]) => c === S.lang)) S.lang = DEFAULT_LANG;
     const out = await SCREENS[name](parts.slice(1));
     if (my !== token) return;                                  // a newer screen was asked for meanwhile
     view.replaceChildren(...flat(out));
@@ -97,12 +99,12 @@ async function home() {
     out.push(h("div", { class: "card warn" }, "সিক্রেটের তালিকা পড়া যায়নি (GitHub টোকেনে Secrets পড়ার অনুমতি লাগে)।"));
   } else {
     const missing = REQUIRED_SECRETS.filter((n) => !o.secrets.includes(n));
-    if (!o.secrets.some((n) => n.startsWith("CFLLM_") && !n.startsWith("CFLLM_ID_"))) missing.push("LLM অ্যাকাউন্ট (কমপক্ষে ১টা)");
+    if (!o.secrets.includes("CFLLM_ACCOUNTS")) missing.push("LLM অ্যাকাউন্ট (কমপক্ষে ১টা)");
     out.push(h("div", { class: "card " + (missing.length ? "warn" : "ok") },
       missing.length ? h("div", {}, h("h2", {}, "অনুপস্থিত সিক্রেট"), missing.map((n) => h("span", { class: "chip bad" }, n)), h("p", {}, h("a", { href: "#/keys" }, "কী ট্যাবে গিয়ে বসান"), " · ", h("a", { href: "#/llm" }, "LLM অ্যাকাউন্ট")))
         : h("div", {}, h("h2", {}, "সিক্রেট"), h("span", { class: "chip ok" }, "সব দরকারি সিক্রেট আছে")),
       h("p", { class: "muted small" }, "আছে: "), o.secrets.filter((n) => !n.startsWith("CFLLM_")).map((n) => h("span", { class: "chip" }, n)),
-      h("span", { class: "chip" }, `LLM অ্যাকাউন্ট ${o.secrets.filter((n) => n.startsWith("CFLLM_") && !n.startsWith("CFLLM_ID_")).length}টি`)));
+      o.secrets.includes("CFLLM_ACCOUNTS") ? h("span", { class: "chip" }, "LLM অ্যাকাউন্ট ✓") : null));
   }
   return out;
 }
@@ -351,7 +353,37 @@ async function settings() {
     h("div", { class: "grp-body stack" }, h("p", { class: "muted small" }, "config/*.yaml ও prompts/*.md সরাসরি সম্পাদনা। প্রতিটি সংরক্ষণ GitHub-এ একটা commit; ভুল হলে ইতিহাস থেকে ফেরান।"), h("div", { class: "row" }, h("div", { class: "grow" }, pick), openBtn), rawBox));
 
   refresh();
-  return [h("h1", {}, "সেটিংস"), h("p", { class: "muted small" }, "বদলালে নিচে সংরক্ষণ-বার আসবে। মডেল, বাজেট ও কাঁচা ফাইলের বদল সঙ্গে সঙ্গে সংরক্ষিত হয়।"), groups, llmSection, rawSection, bar];
+  // ---- site languages (output): add / remove one; every default comes from the catalog, nothing else to fill in ----
+  const LG = d.languages || { enabled: [], default: null, catalog: [] };
+  const info = (code) => LG.catalog.find((x) => x.code === code) || { code, name: code, native: code, ui: false };
+  async function applyLang(op, code, okMsg) {
+    await api("/api/settings", { changes: [{ file: NEWS, kind: "languages", op, code }], versions: { [NEWS]: d.files[NEWS] && d.files[NEWS].sha } });
+    toast(okMsg, "ok");
+    await loadLangs(true);
+    await route();
+  }
+  const langChips = LG.enabled.map((code) => {
+    const m = info(code);
+    const rm = h("button", { class: "btn small danger", onclick: () => guard(rm, async () => {
+      if (!confirm(`${m.native} (${m.name}) সাইট থেকে বাদ দেবেন? আগে প্রকাশিত লেখা রিপোজিটরিতে থাকে, শুধু নতুন লেখা ও মেনু থেকে ভাষাটা যাবে।`)) return;
+      await applyLang("remove", code, "✅ ভাষা বাদ গেছে। পরের রানে সাইটে প্রতিফলিত হবে।");
+    }) }, "বাদ");
+    return h("div", { class: "list-line" }, h("div", { class: "row" }, h("strong", { class: "grow" }, `${m.native} · ${m.name} (${code})`),
+      code === LG.default ? h("span", { class: "chip ok" }, "ডিফল্ট") : (LG.enabled.length > 1 ? rm : null)));
+  });
+  const free = LG.catalog.filter((x) => !LG.enabled.includes(x.code));
+  const langPick = h("select", {}, free.map((m) => h("option", { value: m.code }, `${m.native} · ${m.name}${m.ui ? "" : " (সাইটের লেবেল ইংরেজিতে)"}`)));
+  const addLang = h("button", { class: "btn small primary", onclick: () => guard(addLang, async () => {
+    const m = info(langPick.value);
+    if (!confirm(`${m.native} (${m.name}) যোগ করবেন?\n\n• প্রতিটি নতুন গল্পের জন্য এই ভাষায় আরও একটা লেখা ও যাচাই চলবে, তাই LLM খরচ (neuron) বাড়বে।\n• সাইটের নীতি-পাতাগুলো আপাতত ইংরেজিতেই থাকবে।\n• ${m.ui ? "মেনু ও লেবেল অনুবাদ করা আছে।" : "মেনু ও লেবেল আপাতত ইংরেজিতে দেখাবে।"}`)) return;
+    await applyLang("add", langPick.value, `✅ ${m.native} যোগ হয়েছে। পরের রান থেকে এই ভাষায় লেখা হবে।`);
+  }) }, "➕ ভাষা যোগ");
+  const langCard = h("div", { class: "card" }, h("h2", {}, "সাইটের ভাষা"),
+    h("p", { class: "muted small" }, "যে ভাষাগুলোতে নতুন খবর লেখা ও প্রকাশ হবে। যোগ করতে আর কিছু বসাতে হয় না: দৈর্ঘ্যের সীমা, লেখার নির্দেশ, মেনু-লেবেল ও এআই-ঘোষণা তালিকা থেকে নিজে বসে। সূত্র (feed) যেকোনো ভাষার হতে পারে।"),
+    langChips,
+    free.length ? h("div", { class: "row" }, h("div", { class: "grow" }, langPick), addLang) : h("p", { class: "muted small" }, "তালিকার সব ভাষা যোগ করা হয়ে গেছে।"),
+    h("p", { class: "muted small" }, "জাপানি, চীনা ও থাই লেখায় ফাঁক থাকে না, তাই ন্যূনতম দৈর্ঘ্য অক্ষর গুনে মাপা হয়। জার্মানে বিশেষ্য বড় হাতের, তাই সেখানে বড়-হাতের নাম-যাচাই বন্ধ থাকে। প্রতিটি অনুবাদ পাঠকদের কাছে যাওয়ার আগে ওই ভাষা জানা কাউকে দিয়ে দেখিয়ে নিন।"));
+  return [h("h1", {}, "সেটিংস"), h("p", { class: "muted small" }, "বদলালে নিচে সংরক্ষণ-বার আসবে। মডেল, বাজেট, ভাষা ও কাঁচা ফাইলের বদল সঙ্গে সঙ্গে সংরক্ষিত হয়।"), langCard, groups, llmSection, rawSection, bar];
 }
 
 // ---------- keys ----------
@@ -460,7 +492,7 @@ async function llm() {
     const state = !a.complete ? h("span", { class: "chip bad" }, "অসম্পূর্ণ (আবার যোগ করুন)")
       : !hl ? h("span", { class: "chip warn" }, "যাচাই হয়নি") : hl.ok ? h("span", { class: "chip ok" }, "ঠিক আছে") : h("span", { class: "chip bad" }, "সমস্যা আছে");
     const rm = h("button", { class: "btn small", onclick: () => guard(rm, async () => {
-      if (!confirm(`${a.label} পুল থেকে মুছবেন? এর টোকেনও GitHub থেকে মুছে যাবে।`)) return;
+      if (!confirm(`${a.label} পুল থেকে মুছবেন? এর টোকেনও এখান ও GitHub থেকে মুছে যাবে।`)) return;
       await api("/api/llm/remove", { label: a.label }); toast("🗑 মুছে গেছে", "ok"); await route();
     }) }, "মুছুন");
     const probs = hl ? Object.entries(hl.models || {}).filter(([, v]) => v.status !== "OK").map(([m, v]) => `${m}: ${v.status}${v.reason ? " (" + v.reason + ")" : ""}`)
@@ -513,7 +545,9 @@ async function llm() {
       h("li", {}, "এখানে Account ID আর Token বসিয়ে “পরীক্ষা করে যোগ করুন” চাপুন। প্রতিটি অ্যাকাউন্টে এভাবে আলাদা টোকেন বানাবেন।")),
     h("p", { class: "muted small" }, "ফ্রি অ্যাকাউন্টে দিনে ১০,০০০ neuron মেলে (মধ্যরাত UTC-তে রিসেট)। সব অ্যাকাউন্ট সমানভাবে ব্যবহার হয়: যেটার কম খরচ হয়েছে সেটা আগে, সমান হলে পালা করে। একটা ফুরোলে বা ব্যর্থ হলে পরেরটা কাজ নেয়। সীমা বদলাতে: সেটিংস → মডেল ও বাজেট। GitHub নিজে একটা রিপোজিটরিতে সর্বোচ্চ ১০০টা সিক্রেট রাখতে দেয়, তাই বাস্তবে সীমা সেই পর্যন্ত।"));
 
-  return [h("h1", {}, "LLM অ্যাকাউন্ট পুল"), summary, cards.length ? cards : h("div", { class: "card warn" }, "এখনো কোনো অ্যাকাউন্ট যোগ করা হয়নি।"), add, help];
+  const syncBtn = h("button", { class: "btn small primary", onclick: () => guard(syncBtn, async () => { await api("/api/llm/sync", {}); toast("✅ GitHub-এ পাঠানো হয়েছে", "ok"); await route(); }) }, "GitHub-এ আবার পাঠান");
+  const syncWarn = d.synced ? null : h("div", { class: "card bad" }, h("strong", {}, "⚠️ তালিকা GitHub-এ নেই"), h("p", { class: "small" }, "অ্যাকাউন্টগুলো এখানে আছে, কিন্তু workflow-গুলো পড়ার সিক্রেট GitHub-এ পাওয়া যাচ্ছে না। নিচের বোতামে আবার পাঠান।"), syncBtn);
+  return [h("h1", {}, "LLM অ্যাকাউন্ট পুল"), syncWarn, summary, cards.length ? cards : h("div", { class: "card warn" }, "এখনো কোনো অ্যাকাউন্ট যোগ করা হয়নি।"), add, help];
 }
 
 // ---------- runs ----------

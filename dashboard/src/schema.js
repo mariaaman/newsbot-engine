@@ -2,6 +2,8 @@
 // checks that against the real pydantic models, so the dashboard can never accept a value the engine would reject.
 // file: which brain file holds the value. Fields missing from the file are shown with "default" and can be added.
 
+import { CODES } from "./langs.js";
+
 const N = "config/newsbot.yaml", L = "config/llm.yaml";
 const f = (file, path, type, group, label, help, extra = {}) => ({ file, path, type, group, label, help, ...extra });
 const int = (file, path, group, label, help, min, max) => f(file, path, "int", group, label, help, { min, ...(max !== undefined ? { max } : {}) });
@@ -82,7 +84,7 @@ export const FIELDS = [
 
   str(N, ["site", "name"], "site", "সাইটের নাম", "", { maxLen: 80 }),
   str(N, ["site", "base_url"], "site", "সাইটের ঠিকানা", "কাস্টম ডোমেইন যোগ করলে বদলান", { pattern: "^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[^\\s]*)?$" }),
-  en(N, ["site", "default"], "site", "ডিফল্ট ভাষা", "", ["bn", "en"]),
+  en(N, ["site", "default"], "site", "ডিফল্ট ভাষা", "সাইটের ভাষা-তালিকার মধ্যে একটা হতে হবে (ভাষা যোগ-বাদ: সেটিংসের ওপরের ভাষা-কার্ড)", CODES),
   bool(N, ["site", "bengali_font"], "site", "বাংলা ফন্ট ফাইল আছে", "ফন্ট ফাইল যোগ করার পরই true করুন"),
   num(N, ["site", "timezone_offset_hours"], "site", "সময়-অঞ্চলের অফসেট (ঘণ্টা)", "ঢাকা = ৬", -12, 14),
   list(N, ["site", "categories"], "site", "বিভাগ", "কমা দিয়ে আলাদা করুন"),

@@ -14,7 +14,6 @@ from tests.helpers import ROOT
 WF_DIR = ROOT / ".github" / "workflows"
 FILES = sorted(WF_DIR.glob("*.yml"))
 SECRET_NAME = re.compile(r"(TOKEN|KEY|SECRET|PASSWORD)", re.I)
-COLLECT_ENV = "ALL_SECRETS_JSON"
 TAG = re.compile(r"^v\d+(\.\d+){0,2}$")
 SHA = re.compile(r"^[0-9a-f]{40}$")
 HARDCODED = re.compile(r"(ghp_[A-Za-z0-9]{20,}|github_pat_\w{20,}|gsk_\w{20,}|AIza[\w-]{20,}|cfut_\w{20,})")
@@ -80,9 +79,6 @@ def test_secrets_only_through_secrets_context_and_never_echoed():
         wf = load(f)
         for s in steps(wf):
             for k, v in (s.get("env") or {}).items():
-                if k == COLLECT_ENV:                      # the ONE exception: the step that collects the dashboard's LLM accounts
-                    assert v == "${{ toJSON(secrets) }}" and s.get("run") == "python scripts/collect_llm_accounts.py" and s.get("name") == "Collect LLM accounts", (f.name, k)
-                    continue
                 if SECRET_NAME.search(k):
                     assert re.fullmatch(r"\$\{\{ secrets\.[A-Z_]+ \}\}", str(v)), (f.name, k)
             for k, v in (s.get("with") or {}).items():
@@ -267,13 +263,24 @@ def test_brain_commit_rebases_when_main_moved():
         assert {"content/en/owner.md", "content/en/a.md", "state/stories.jsonl"} <= files
 
 
-def test_llm_accounts_are_collected_once_before_every_step_that_calls_the_llm_and_never_exported_as_values():
+def test_no_workflow_reads_the_whole_secrets_context_GitHub_holds_such_runs_for_approval():
+    for f in sorted(WF_DIR.glob("*.yml")):
+        text = f.read_text(encoding="utf-8")
+        assert "toJSON(secrets)" not in text.replace(" ", "") and "toJson(secrets)" not in text.replace(" ", ""), f.name
+        assert "secrets: inherit" not in text, f.name
+
+
+def test_llm_accounts_come_from_one_ordinary_secret_before_every_step_that_calls_the_llm():
     for name in ("hourly.yml", "setup.yml", "readiness.yml", "llm-check.yml"):
         st = steps(load(WF_DIR / name))
         collect = next(i for i, s in enumerate(st) if s.get("id") == "llm_accounts")
+        assert st[collect]["env"] == {"CFLLM_ACCOUNTS": "${{ secrets.CFLLM_ACCOUNTS }}"}, name
         users = [i for i, s in enumerate(st) if any(c in s.get("run", "") for c in ("-m newsbot run", "-m newsbot health", "-m newsbot llmtest", "-m newsbot llmcheck", "setup_check.py"))]
         assert users and all(collect < i for i in users), name
-        assert sum(1 for s in st if "ALL_SECRETS_JSON" in (s.get("env") or {})) == 1, name          # the whole secrets context reaches ONE step only
+    for name in ("hourly.yml", "llm-check.yml"):                  # the token file does not outlive the steps that need it
+        st = steps(load(WF_DIR / name))
+        rm = [i for i, s in enumerate(st) if "NEWSBOT_CF_ACCOUNTS_FILE" in s.get("run", "") and s.get("if") == "always()"]
+        assert rm, name
     text = (ROOT / "scripts" / "collect_llm_accounts.py").read_text(encoding="utf-8")
     assert "NEWSBOT_CF_ACCOUNTS_FILE=" in text and "NEWSBOT_CF_ACCOUNTS=" not in text             # a file path goes to later steps, never the values
 

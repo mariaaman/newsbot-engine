@@ -1,7 +1,7 @@
 # LLM: Cloudflare Workers AI account pool
 
 The only LLM provider is **Cloudflare Workers AI**. Any number of Cloudflare accounts can be added (nothing in the code
-limits the count; GitHub itself allows about 100 secrets per repository). All accounts form one pool and are used
+limits the count; one GitHub secret holds about 300). All accounts form one pool and are used
 **equally**: the account that has used the smaller share of today's allowance goes first, accounts on the same level
 take turns. When an account reaches 90% of its daily allowance, answers 429, or fails, the next account takes over.
 When every account is used up the existing queue keeps the stories and the next run (after 00:00 UTC) continues.
@@ -19,11 +19,14 @@ that account; one tiny real call per model and one embedding call answer. One fa
 The same Cloudflare account added twice, or the same name twice, is refused.
 
 ## How accounts are stored and reach the engine
-Dashboard: secret `CFLLM_<NAME>` = `{"a": "<account id>", "t": "<token>"}` (write-only at GitHub, nobody can read it back) and a
-variable `CFLLM_ID_<NAME>` = the account id (used for the list, the duplicate check and the masked display).
-Workflows: one step, `scripts/collect_llm_accounts.py`, receives the secrets context, keeps only `CFLLM_*`, writes an
-owner-only file and exports only its **path** (`NEWSBOT_CF_ACCOUNTS_FILE`). Without any account the deploy account
-(`CLOUDFLARE_*`) is used as a single-account fallback; once a dashboard account exists the deploy account is not used for LLM work.
+The dashboard keeps the list in its own Cloudflare KV (`llm:accounts`; Cloudflare encrypts KV at rest, only the dashboard reads it, the
+browser never gets a token back) and pushes the same list as ONE ordinary GitHub secret, **`CFLLM_ACCOUNTS`**, after every change
+(if GitHub refuses, KV is put back, nothing is half-saved; a "send again" button appears when the secret is missing). One GitHub secret
+holds about 300 accounts.
+Workflows read it like any other secret, `${{ secrets.CFLLM_ACCOUNTS }}`, in one step (`scripts/collect_llm_accounts.py`), which writes an
+owner-only file and exports only its **path** (`NEWSBOT_CF_ACCOUNTS_FILE`); the file is removed when the job ends. No workflow reads the whole
+secrets context: GitHub holds such runs for approval (the "workflow file may be malicious" banner) because that is how secrets are stolen.
+Without any account the deploy account (`CLOUDFLARE_*`) is used as a single-account fallback; once a dashboard account exists it is not.
 
 ## What the dashboard shows
 Per account: neurons used today and % of the daily limit, requests, tokens, failures, the last error, and per model the same.

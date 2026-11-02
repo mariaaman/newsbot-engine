@@ -39,7 +39,7 @@ jobs:
       - name: Collect LLM accounts
         id: llm_accounts
         env:
-          ALL_SECRETS_JSON: ${{ toJSON(secrets) }}
+          CFLLM_ACCOUNTS: ${{ secrets.CFLLM_ACCOUNTS }}
         run: python scripts/collect_llm_accounts.py
       - name: Secrets, variables, brain repo, Cloudflare, Pages project, Workers AI
         env:

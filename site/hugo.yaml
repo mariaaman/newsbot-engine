@@ -3,8 +3,9 @@
 #   hugo --minify -s site --baseURL "$(python scripts/gen_site_config.py --brain <brain> --print-base-url)"
 baseURL: "https://example.pages.dev/"   # placeholder; overridden with --baseURL
 title: "NewsBot"                        # placeholder; templates use data/site.yaml name
+# BEGIN GENERATED LANGUAGES (scripts/gen_site_config.py rewrites this block from site.languages in newsbot.yaml: edit that, not this)
 defaultContentLanguage: bn
-defaultContentLanguageInSubdir: true    # /bn/ and /en/; the root only redirects (and serves static/404.html)
+defaultContentLanguageInSubdir: true    # /bn/ and /en/ ...; the root only redirects (and serves static/404.html)
 disableDefaultLanguageRedirect: false
 languages:
   bn:
@@ -13,10 +14,11 @@ languages:
     weight: 1
     contentDir: content/bn
   en:
-    languageName: English
+    languageName: "English"
     languageCode: en
     weight: 2
     contentDir: content/en
+# END GENERATED LANGUAGES
 # Taxonomies: categories ONLY (no tags, no per-day archives) to stay far below the 20,000-file limit.
 taxonomies:
   category: categories

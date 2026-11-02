@@ -1,16 +1,38 @@
 // LLM account pool: list accounts with usage and health, check an account BEFORE saving it, add, remove, start a re-check.
-// Each account = secret CFLLM_<LABEL> ({"a": account id, "t": token}; GitHub keeps it, nobody can read it back) + a mirror
-// variable CFLLM_ID_<LABEL> (the account id; lets this panel list accounts and refuse a duplicate). No limit on how many.
+// The list of accounts lives in the Worker's KV (key llm:accounts: {LABEL: {a: account id, t: token, added}}). Every change also
+// pushes the whole list as ONE GitHub secret, CFLLM_ACCOUNTS, which the workflows read like any other secret (no secrets-context dump).
+// No limit on how many accounts (one GitHub secret holds about 300). The token is never sent back to the browser.
 import * as gh from "./github.js";
 import { getFile } from "./github.js";
 import { reader } from "./yamledit.js";
 import { TIERS } from "./schema.js";
 import { HttpError, must, isObj } from "./util.js";
-import { CFLLM_PREFIX, CFLLM_ID_PREFIX, ACCOUNT_RE, LABEL_RE, normaliseLabel, checkCloudflareAccount } from "./keys.js";
+import { CFLLM_SECRET, KV_ACCOUNTS, ACCOUNT_RE, LABEL_RE, normaliseLabel, checkCloudflareAccount } from "./keys.js";
 
 const parse = (s, fallback) => { try { return JSON.parse(s); } catch { return fallback; } };
 const providerOf = (label) => "cf_" + label.toLowerCase();
 const mask = (id) => (typeof id === "string" && id.length >= 8 ? `${id.slice(0, 4)}…${id.slice(-4)}` : "");
+const MAX_SECRET = 45000;                                  // GitHub allows 48 KB per secret
+
+async function readList(env) {
+  const raw = await env.KV.get(KV_ACCOUNTS);
+  const v = raw ? parse(raw, {}) : {};
+  return isObj(v) ? v : {};
+}
+const forEngine = (list) => JSON.stringify(Object.fromEntries(Object.entries(list).map(([l, v]) => [l, { a: v.a, t: v.t }])));
+
+/** Saves the list: KV first, then the GitHub secret; when the secret cannot be written the KV is put back as it was. */
+async function save(env, before, after) {
+  const labels = Object.keys(after);
+  if (labels.length) must(forEngine(after).length <= MAX_SECRET, 400, "too many accounts for one GitHub secret (about 300)");
+  await (labels.length ? env.KV.put(KV_ACCOUNTS, JSON.stringify(after)) : env.KV.delete(KV_ACCOUNTS));
+  try {
+    return labels.length ? await gh.putSecret(env, CFLLM_SECRET, forEngine(after)) : await gh.deleteSecret(env, CFLLM_SECRET);
+  } catch (e) {
+    await (Object.keys(before).length ? env.KV.put(KV_ACCOUNTS, JSON.stringify(before)) : env.KV.delete(KV_ACCOUNTS));
+    throw new HttpError(502, "GitHub did not accept the change, nothing was saved (" + (e && e.message ? String(e.message).slice(0, 120) : "error") + ")");
+  }
+}
 
 /** Chat models and the embedding model that config/llm.yaml sends to the Workers AI pool. */
 export function poolModels(llmText) {
@@ -27,25 +49,21 @@ export function poolModels(llmText) {
 }
 
 async function parts(env) {
-  const [secrets, vars, llm, health, snap, runs] = await Promise.all([
-    gh.listSecrets(env), gh.listVars(env), getFile(env, "config/llm.yaml"), getFile(env, "state/llm_health.json").catch(() => null),
+  const [secrets, list, llm, health, snap, runs] = await Promise.all([
+    gh.listSecrets(env), readList(env), getFile(env, "config/llm.yaml"), getFile(env, "state/llm_health.json").catch(() => null),
     gh.brainSnapshot(env), gh.runs(env, 30).catch(() => []),
   ]);
-  return { secrets, vars, llm, health: health ? parse(health.text, null) : null, usage: parse(snap.usage, {}), runs };
+  return { secret: secrets.find((x) => x.name === CFLLM_SECRET) || null, list, llm, health: health ? parse(health.text, null) : null, usage: parse(snap.usage, {}), runs };
 }
 
 export async function overview(env) {
-  const { secrets, vars, llm, health, usage, runs } = await parts(env);
+  const { secret, list, llm, health, usage, runs } = await parts(env);
   const cfg = poolModels(llm && llm.text);
   const today = new Date().toISOString().slice(0, 10);
   const counters = usage.day === today ? usage.counters || {} : {};          // yesterday's numbers are not today's
   const errors = usage.day === today ? usage.errors || {} : {};
-  const labels = new Map();
-  for (const s of secrets) if (s.name.startsWith(CFLLM_PREFIX) && !s.name.startsWith(CFLLM_ID_PREFIX)) labels.set(s.name.slice(CFLLM_PREFIX.length), { updated: s.updated, hasSecret: true });
-  for (const v of vars) if (v.name.startsWith(CFLLM_ID_PREFIX)) { const l = v.name.slice(CFLLM_ID_PREFIX.length); labels.set(l, { ...(labels.get(l) || {}), id: v.value }); }
-
   const accounts = [];
-  for (const [label, info] of [...labels.entries()].sort()) {
+  for (const [label, info] of Object.entries(list).sort(([a], [b]) => (a < b ? -1 : 1))) {
     const prov = providerOf(label), models = [];
     let requests = 0, tokens = 0, neurons = 0, failures = 0;
     for (const [k, c] of Object.entries(counters)) {
@@ -54,14 +72,14 @@ export async function overview(env) {
       models.push({ model: k.slice(prov.length + 1), requests: c.requests || 0, tokens: c.tokens || 0, neurons: Math.round(c.neurons || 0), failures: c.failures || 0 });
     }
     const h = health?.accounts?.[label.toLowerCase()] || null;
-    accounts.push({ label, provider: prov, complete: !!info.hasSecret && !!info.id, updated: info.updated || null, hint: mask(info.id),
+    accounts.push({ label, provider: prov, complete: !!secret, updated: info.added || null, hint: mask(info.a),
       usage: { requests, tokens, neurons: Math.round(neurons), failures, pct: cfg.limit ? Math.min(999, Math.round((neurons / cfg.limit) * 100)) : null, models },
       error: errors[prov] || null, health: h });
   }
   const used = accounts.reduce((a, x) => a + x.usage.neurons, 0);
   const lastRun = runs.find((r) => r.name === "llm-check") || null;
   return {
-    accounts, day: usage.day || null, today, limit: cfg.limit, stop: cfg.stop, models: cfg.models, embedding: cfg.embedding,
+    accounts, synced: !Object.keys(list).length || !!secret, secret_updated: secret ? secret.updated : null, day: usage.day || null, today, limit: cfg.limit, stop: cfg.stop, models: cfg.models, embedding: cfg.embedding,
     totals: { accounts: accounts.length, neurons: used, capacity: cfg.limit ? Math.round(cfg.limit * cfg.stop * accounts.filter((a) => a.complete).length) : null,
       requests: accounts.reduce((a, x) => a + x.usage.requests, 0), failures: accounts.reduce((a, x) => a + x.usage.failures, 0) },
     health: health ? { checked_at: health.checked_at, summary: health.summary } : null,
@@ -81,38 +99,45 @@ export async function test(env, b) {
   return checkCloudflareAccount(String(b.account_id || "").trim().toLowerCase(), b.token, { models: c.models, embedding: c.embedding });
 }
 
-/** Re-checks everything server-side (the browser is never trusted), refuses duplicates, then saves secret + mirror variable. */
+/** Re-checks everything server-side (the browser is never trusted), refuses duplicates, then saves. */
 export async function add(env, b, audit) {
   must(isObj(b), 400, "bad request");
   const accountId = String(b.account_id || "").trim().toLowerCase();
   must(ACCOUNT_RE.test(accountId), 400, "the account id should be 32 characters of 0-9 a-f");
   must(typeof b.token === "string" && b.token.trim().length >= 20 && !/\s/.test(b.token.trim()) && b.token.length <= 2000, 400, "the API token looks wrong");
-  const [secrets, vars] = await Promise.all([gh.listSecrets(env), gh.listVars(env)]);
-  const taken = new Set(secrets.filter((s) => s.name.startsWith(CFLLM_PREFIX) && !s.name.startsWith(CFLLM_ID_PREFIX)).map((s) => s.name.slice(CFLLM_PREFIX.length)));
-  const idOf = new Map(vars.filter((v) => v.name.startsWith(CFLLM_ID_PREFIX)).map((v) => [v.name.slice(CFLLM_ID_PREFIX.length), v.value]));
+  const before = await readList(env);
   let label = normaliseLabel(b.label);
-  if (!label) { let n = 1; while (taken.has("ACC" + n)) n++; label = "ACC" + n; }
+  if (!label) { let n = 1; while (before["ACC" + n]) n++; label = "ACC" + n; }
   must(LABEL_RE.test(label), 400, "the name: capital letters, digits and _ (up to 32)");
-  if (taken.has(label)) must(b.replace === true, 409, `the name ${label} is already used. Pick another name, or choose “replace” to change its token`);
-  for (const [l, id] of idOf) must(id !== accountId || l === label, 409, `this Cloudflare account is already added as ${l}`);
+  if (before[label]) must(b.replace === true, 409, `the name ${label} is already used. Pick another name, or choose “replace” to change its token`);
+  for (const [l, v] of Object.entries(before)) must(v.a !== accountId || l === label, 409, `this Cloudflare account is already added as ${l}`);
   const c = await cfg(env);
   const res = await checkCloudflareAccount(accountId, b.token, { models: c.models, embedding: c.embedding });
   if (res.ok === false) throw new HttpError(422, "Not saved: " + (res.steps.find((s) => s.ok === false)?.detail || "the check failed"), { test: res });
   if (res.ok === null && b.force !== true) throw new HttpError(422, "Could not fully confirm this account. Nothing was saved. Save anyway only if you are sure.", { test: res, needsForce: true });
-  const status = await gh.putSecret(env, CFLLM_PREFIX + label, JSON.stringify({ a: accountId, t: b.token.trim() }));
-  let mirror = "ok";
-  try { await gh.upsertVar(env, CFLLM_ID_PREFIX + label, accountId); } catch { mirror = "failed"; }
-  await audit(`llm account ${status}`, label);
-  return { label, status, mirror, test: res };
+  const after = { ...before, [label]: { a: accountId, t: b.token.trim(), added: new Date().toISOString() } };
+  const status = await save(env, before, after);
+  await audit(`llm account ${before[label] ? "updated" : "created"}`, label);
+  return { label, status: before[label] ? "updated" : "created", test: res };
 }
 
 export async function remove(env, b, audit) {
   must(isObj(b) && typeof b.label === "string" && LABEL_RE.test(b.label), 400, "bad account name");
-  const s = await gh.deleteSecret(env, CFLLM_PREFIX + b.label);
-  const v = await gh.deleteVar(env, CFLLM_ID_PREFIX + b.label);
-  must(s === "deleted" || v === "deleted", 404, "no such account");
+  const before = await readList(env);
+  must(before[b.label], 404, "no such account");
+  const { [b.label]: _gone, ...after } = before;
+  await save(env, before, after);
   await audit("llm account removed", b.label);
   return { ok: true };
+}
+
+/** Pushes the stored list to GitHub again (after a failed save, or when the secret was deleted by hand). */
+export async function sync(env, audit) {
+  const list = await readList(env);
+  must(Object.keys(list).length, 404, "no accounts to push");
+  const status = await save(env, list, list);
+  await audit("llm accounts synced", String(Object.keys(list).length));
+  return { ok: true, status };
 }
 
 export async function checkNow(env, audit) {

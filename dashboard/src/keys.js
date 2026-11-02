@@ -41,8 +41,8 @@ export async function testKey(env, name, value) {
   return k.test(value.trim(), env);
 }
 
-// ---------- Cloudflare LLM accounts (any number; one secret CFLLM_<LABEL> + one mirror variable CFLLM_ID_<LABEL> each) ----------
-export const CFLLM_PREFIX = "CFLLM_", CFLLM_ID_PREFIX = "CFLLM_ID_";
+// ---------- Cloudflare LLM accounts (any number; kept in the Worker's KV, and pushed as ONE GitHub secret for the workflows) ----------
+export const CFLLM_SECRET = "CFLLM_ACCOUNTS", KV_ACCOUNTS = "llm:accounts";
 export const LABEL_RE = /^[A-Z0-9_]{1,32}$/;
 export const ACCOUNT_RE = /^[0-9a-f]{32}$/;
 const CF = "https://api.cloudflare.com/client/v4";

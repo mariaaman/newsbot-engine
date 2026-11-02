@@ -139,10 +139,12 @@ const ROUTES = {
     await audit(env, req, "key set", `${b.name} (${status})`);          // the name only, never the value
     return { status, test, after: KEYS.find((k) => k.name === b.name)?.after || null };
   },
+  "GET /api/languages": (env) => settings.languagesOf(env),
   "GET /api/llm": (env) => llm.overview(env),
   "POST /api/llm/test": (env, req, b) => llm.test(env, b),
   "POST /api/llm/add": (env, req, b) => llm.add(env, b, (a, d) => audit(env, req, a, d)),
   "POST /api/llm/remove": (env, req, b) => llm.remove(env, b, (a, d) => audit(env, req, a, d)),
+  "POST /api/llm/sync": (env, req) => llm.sync(env, (a, d) => audit(env, req, a, d)),
   "POST /api/llm/check": (env, req) => llm.checkNow(env, (a, d) => audit(env, req, a, d)),
   "POST /api/vars/set": async (env, req, b) => {
     must(typeof b.name === "string" && VAR_NAME.test(b.name), 400, "variable names: capital letters, digits and _");

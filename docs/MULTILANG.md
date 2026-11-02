@@ -24,6 +24,6 @@
 - **Token budget**: a rich article costs roughly 60-100k tokens (many sources, Bengali/Hindi/Japanese text is token-heavy). Every free Cloudflare account gives 10,000 neurons a day; measure real use per account on the dashboard LLM page and **add more accounts** (no limit in the code) or lower `max_sources_per_story` / `source_chars` to trade depth for volume.
 - Detail is limited by the fact sheet: the engine never lets the writer add facts. More sources and facts = richer article; thin sources = a shorter article (it is better short than invented).
 - No live web search: "research" means more of the feed pool plus deeper reading, not Google search (Google News links are redirects that cannot be read reliably).
-- Output stays **bn + en**. More output languages (hi, ur, ar ...) are a later step: the writer already falls back to `prompts/write_default.md`, but each new output language also needs Hugo i18n, trust pages, QA limits and a `write_<lang>` task in llm.yaml.
+- The site publishes in `site.languages` (default bn + en). More output languages (hi, ur, ar, ja, de, ...) are added from the dashboard, see docs/LANGUAGES.md: defaults, costs and what still needs a human (reviewing the translated labels, notice and trust pages).
 - Every feed URL is marked `# VERIFY` (written without network access). Dead feeds only cost a warning.
 - Optional: set the `NEWSBOT_CONTACT_URL` environment variable (e.g. your About page) so the crawler identifies itself properly; some sites block anonymous agents.

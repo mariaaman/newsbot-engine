@@ -107,16 +107,32 @@ test("llm screen: add an account with the form (checked first), see it with its 
   const test = view.find((e) => e.tag === "button" && e.text().includes("শুধু পরীক্ষা"))[0];
   for (const fn of test.listeners.click) await fn({ target: test });
   await tick(150);
-  assert.match(view.text(), /সব পরীক্ষা পাস/); assert.ok(!world.secrets.CFLLM_PHONE1);          // a test alone saves nothing
+  assert.match(view.text(), /সব পরীক্ষা পাস/); assert.ok(!world.secrets.CFLLM_ACCOUNTS);          // a test alone saves nothing
   const add = view.find((e) => e.tag === "button" && e.text().includes("পরীক্ষা করে যোগ করুন"))[0];
   for (const fn of add.listeners.click) await fn({ target: add });
   await tick(300);
-  assert.ok(world.secrets.CFLLM_PHONE1);
+  assert.ok(world.secrets.CFLLM_ACCOUNTS);
   assert.equal(token.value, "");                                                                  // the typed token is cleared
   assert.match(view.text(), /PHONE1/);
   assert.match(view.text(), /আজকের অবস্থা/);
   const rm = view.find((e) => e.tag === "button" && e.text() === "মুছুন")[0];
   for (const fn of rm.listeners.click) await fn({ target: rm });
   await tick(300);
-  assert.ok(!world.secrets.CFLLM_PHONE1);
+  assert.ok(!world.secrets.CFLLM_ACCOUNTS);
+});
+
+test("settings: the language card lists the site languages and adds / removes one", async () => {
+  await go("#/settings");
+  assert.match(view.text(), /সাইটের ভাষা/); assert.match(view.text(), /বাংলা · Bengali \(bn\)/); assert.match(view.text(), /ডিফল্ট/);
+  const sel = view.find((e) => e.tag === "select" && e.find((o) => o.tag === "option" && o.text().includes("हिन्दी")).length)[0];
+  assert.ok(sel, "the picker offers Hindi");
+  assert.ok(!sel.find((o) => o.tag === "option" && o.text().includes("English")).length, "a language already on the site is not offered again");
+  sel.value = "hi";
+  await click((e) => true, "ভাষা যোগ");
+  await tick(150);
+  assert.match(world.files["config/newsbot.yaml"], /languages: \[bn, en, hi\]/);
+  assert.match(view.text(), /हिन्दी · Hindi \(hi\)/);
+  await click((e) => true, "বাদ");                                  // the first remove button belongs to the first non-default language (en)
+  await tick(150);
+  assert.match(world.files["config/newsbot.yaml"], /languages: \[bn, hi\]/);
 });

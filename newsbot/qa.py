@@ -15,6 +15,7 @@ import unicodedata
 from dataclasses import dataclass, field
 
 from newsbot.cluster import cosine, jaccard, tokenize
+from newsbot import langs as L
 from newsbot.extract import norm_text, numbers_in
 from newsbot.llm import BudgetExhausted, LLMError
 from newsbot.models import FactSheet, parse_ts
@@ -224,11 +225,12 @@ def run_gates(a: dict, fs: FactSheet, lang: str, cfg, *, recent: list | None = N
             r.details[code] = detail
 
     # structure and size
-    lo, hi = q.title_len[lang]
+    lo, hi = L.title_len(q, lang)
     if not lo <= len(a["title"]) <= hi:
         fail("title_length", length=len(a["title"]))
-    n_words = len(words(re.sub(r"(?m)^#.*$", "", strip_markers(a["body_markdown"]))))
-    if n_words < q.min_words[lang]:
+    body = re.sub(r"(?m)^#.*$", "", strip_markers(a["body_markdown"]))
+    n_words = L.length_units(body, lang, words(body))            # words; letters for a script without spaces (ja, zh, th)
+    if n_words < L.min_words(q, lang):
         fail("min_words", words=n_words)
     if a["category"] not in cfg.site.categories:
         fail("category")
@@ -261,7 +263,7 @@ def run_gates(a: dict, fs: FactSheet, lang: str, cfg, *, recent: list | None = N
     extra = numbers_in(_numbers_text(all_text)) - nums
     if extra:
         fail("unsupported_number", count=len(extra))
-    names = unsupported_names(all_text, vocab)
+    names = unsupported_names(all_text, vocab) if L.meta(lang)["names"] else []     # German capitalises every noun: no name check
     if names:
         fail("unsupported_name", count=len(names))
     confirmed_facts = [f for f in fs.facts if f.status == "confirmed"]

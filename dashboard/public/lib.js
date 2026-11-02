@@ -1,8 +1,20 @@
 // Helpers for app.js: a tiny element builder, the API caller, formatting, and the draft front-matter reader.
 // No innerHTML except where the caller passes server-escaped preview HTML; every other text goes in as text nodes.
 
-export const LANGS = [["bn", "বাংলা"], ["en", "English"]];          // keep in step with site.languages in config/newsbot.yaml
-export const DEFAULT_LANG = "bn";
+export const LANGS = [["bn", "বাংলা"], ["en", "English"]];          // replaced by the site's real languages (GET /api/languages) before the first screen
+export let DEFAULT_LANG = "bn";
+let loaded = false;
+export async function loadLangs(force = false) {
+  if (loaded && !force) return;
+  try {
+    const d = await api("/api/languages");
+    if (Array.isArray(d.languages) && d.languages.length) {
+      LANGS.splice(0, LANGS.length, ...d.languages.map((l) => [l.code, l.native]));
+      DEFAULT_LANG = d.default || d.languages[0].code;
+      loaded = true;
+    }
+  } catch { /* the built-in bn / en tabs stay */ }
+}
 
 // Secrets the bot needs to run end to end (the dashboard shows which are missing; it can never read a value).
 export const REQUIRED_SECRETS = ["BRAIN_REPO_TOKEN", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "APPROVE_GH_TOKEN"];

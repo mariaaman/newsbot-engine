@@ -58,7 +58,7 @@ jobs:
       - name: Collect LLM accounts
         id: llm_accounts
         env:
-          ALL_SECRETS_JSON: ${{ toJSON(secrets) }}
+          CFLLM_ACCOUNTS: ${{ secrets.CFLLM_ACCOUNTS }}
         run: python scripts/collect_llm_accounts.py
       - name: Run engine
         id: run

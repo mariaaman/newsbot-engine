@@ -13,13 +13,15 @@ async function session(opts) {
   const lr = await worker.fetch(new Request("https://dash.example/api/login", { method: "POST", headers: { ...H, "CF-Connecting-IP": "1.2.3.4" }, body: JSON.stringify({ password: PASS }) }), env);
   const cookie = lr.headers.get("set-cookie").split(";")[0];
   const c = (path, { method = "GET", body } = {}) => worker.fetch(new Request("https://dash.example" + path, { method, headers: { ...(method === "GET" ? {} : H), Cookie: cookie, "CF-Connecting-IP": "1.2.3.4" }, body: body === undefined ? undefined : JSON.stringify(body) }), env);
-  return { w, c };
+  return { w, c, env };
 }
 const post = (c, path, body) => c(path, { method: "POST", body });
 const today = new Date().toISOString().slice(0, 10);
 
-test("add: every check runs first, then the secret (id + token) and the mirror variable are saved", async () => {
-  const { c, w } = await session();
+const engineList = (w) => JSON.parse(openSealed(w, w.secrets.CFLLM_ACCOUNTS.encrypted_value));
+
+test("add: every check runs first, then the list is kept in KV and pushed as ONE ordinary GitHub secret", async () => {
+  const { c, w, env } = await session();
   const a = addCf(w, 1);
   const r = await post(c, "/api/llm/add", { label: "phone 1", account_id: a.id, token: a.token });
   assert.equal(r.status, 200, await r.clone().text());
@@ -27,14 +29,15 @@ test("add: every check runs first, then the secret (id + token) and the mirror v
   assert.equal(out.label, "PHONE_1"); assert.equal(out.status, "created"); assert.equal(out.test.ok, true);
   const names = out.test.steps.map((s) => s.name);
   assert.ok(names.includes("token and Workers AI")); assert.ok(names.some((n) => n.startsWith("model @cf/openai/gpt-oss-20b"))); assert.ok(names.some((n) => n.startsWith("embedding")));
-  const stored = JSON.parse(openSealed(w, w.secrets.CFLLM_PHONE_1.encrypted_value));
-  assert.deepEqual(stored, { a: a.id, t: a.token });                         // real round trip: what the engine will read
-  assert.equal(w.vars.CFLLM_ID_PHONE_1, a.id);
+  assert.deepEqual(engineList(w), { PHONE_1: { a: a.id, t: a.token } });              // real round trip: exactly what the workflows read
+  assert.deepEqual(Object.keys(w.secrets), ["CFLLM_ACCOUNTS"]); assert.deepEqual(Object.keys(w.vars), ["PAGES_PROJECT"]);
+  assert.equal(JSON.parse(await env.KV.get("llm:accounts")).PHONE_1.a, a.id);
   assert.ok(!JSON.stringify(await (await c("/api/audit")).json()).includes(a.token));          // the token is never logged
+  assert.ok(!(await (await c("/api/llm")).text()).includes(a.token));                          // and never sent back to the browser
 });
 
 test("add: a wrong token, an unknown account, a missing model or an empty answer are refused and nothing is saved", async () => {
-  const { c, w } = await session();
+  const { c, w, env } = await session();
   const a = addCf(w, 1);
   let r = await post(c, "/api/llm/add", { label: "A", account_id: a.id, token: "tok_" + "y".repeat(30) });
   assert.equal(r.status, 422); assert.match((await r.json()).error, /token rejected|permission/);
@@ -49,7 +52,7 @@ test("add: a wrong token, an unknown account, a missing model or an empty answer
   const f = addCf(w, 4, { chat: 500 });
   assert.equal((await post(c, "/api/llm/add", { label: "F", account_id: f.id, token: f.token })).status, 422);
   for (const bad of [{ account_id: "xyz", token: a.token }, { account_id: a.id, token: "short" }, { account_id: a.id, token: "has space inside the token value" }]) assert.equal((await post(c, "/api/llm/add", { label: "G", ...bad })).status, 400);
-  assert.deepEqual(Object.keys(w.secrets), []); assert.deepEqual(Object.keys(w.vars), ["PAGES_PROJECT"]);
+  assert.deepEqual(Object.keys(w.secrets), []); assert.equal(await env.KV.get("llm:accounts"), null);
 });
 
 test("add: an account whose allowance is spent today is only saved when you confirm", async () => {
@@ -57,15 +60,15 @@ test("add: an account whose allowance is spent today is only saved when you conf
   const a = addCf(w, 1, { chat: 429 });
   let r = await post(c, "/api/llm/add", { label: "A", account_id: a.id, token: a.token });
   const body = await r.json();
-  assert.equal(r.status, 422); assert.equal(body.needsForce, true); assert.equal(body.test.ok, null); assert.ok(!w.secrets.CFLLM_A);
+  assert.equal(r.status, 422); assert.equal(body.needsForce, true); assert.equal(body.test.ok, null); assert.ok(!w.secrets.CFLLM_ACCOUNTS);
   r = await post(c, "/api/llm/add", { label: "A", account_id: a.id, token: a.token, force: true });
-  assert.equal(r.status, 200); assert.ok(w.secrets.CFLLM_A);
+  assert.equal(r.status, 200); assert.ok(engineList(w).A);
 });
 
 test("add: no limit on how many accounts; the same Cloudflare account or the same name twice is refused", async () => {
   const { c, w } = await session();
   for (let n = 1; n <= 12; n++) { const a = addCf(w, n); assert.equal((await post(c, "/api/llm/add", { label: `P${n}`, account_id: a.id, token: a.token })).status, 200, `account ${n}`); }
-  assert.equal(Object.keys(w.secrets).filter((k) => k.startsWith("CFLLM_")).length, 12);
+  assert.equal(Object.keys(engineList(w)).length, 12);                                      // all twelve in the one secret
   const o = await (await c("/api/llm")).json();
   assert.equal(o.accounts.length, 12); assert.equal(o.totals.accounts, 12); assert.ok(o.accounts.every((x) => x.complete));
   const same = addCf(w, 1);
@@ -112,15 +115,41 @@ test("overview: yesterday's usage is not shown as today's", async () => {
   assert.equal(o.accounts[0].usage.neurons, 0); assert.equal(o.totals.neurons, 0);
 });
 
-test("remove: the secret and its mirror variable go; an unknown name or a bad name is refused; re-check starts the workflow", async () => {
-  const { c, w } = await session();
-  const a = addCf(w, 1); await post(c, "/api/llm/add", { label: "P1", account_id: a.id, token: a.token });
+test("remove: the account leaves KV and the secret; the last one removes the secret; unknown or bad names are refused; re-check starts the workflow", async () => {
+  const { c, w, env } = await session();
+  const a = addCf(w, 1), b = addCf(w, 2);
+  await post(c, "/api/llm/add", { label: "P1", account_id: a.id, token: a.token }); await post(c, "/api/llm/add", { label: "P2", account_id: b.id, token: b.token });
   assert.equal((await post(c, "/api/llm/remove", { label: "lower" })).status, 400);
   assert.equal((await post(c, "/api/llm/remove", { label: "NOPE" })).status, 404);
   assert.equal((await post(c, "/api/llm/remove", { label: "P1" })).status, 200);
-  assert.ok(!w.secrets.CFLLM_P1); assert.ok(!w.vars.CFLLM_ID_P1);
+  assert.deepEqual(Object.keys(engineList(w)), ["P2"]); assert.deepEqual(Object.keys(JSON.parse(await env.KV.get("llm:accounts"))), ["P2"]);
+  assert.equal((await post(c, "/api/llm/remove", { label: "P2" })).status, 200);
+  assert.ok(!w.secrets.CFLLM_ACCOUNTS); assert.equal(await env.KV.get("llm:accounts"), null);
   assert.equal((await post(c, "/api/llm/check", {})).status, 200);
   assert.deepEqual(w.dispatches.map((x) => x.workflow), ["llm-check"]);
+});
+
+test("if GitHub refuses the secret, nothing is half-saved; a deleted secret is noticed and can be pushed again", async () => {
+  const { c, w, env } = await session();
+  const a = addCf(w, 1), b = addCf(w, 2);
+  await post(c, "/api/llm/add", { label: "P1", account_id: a.id, token: a.token });
+  w.failSecretPut = true;
+  const r = await post(c, "/api/llm/add", { label: "P2", account_id: b.id, token: b.token });
+  assert.equal(r.status, 502);
+  assert.deepEqual(Object.keys(JSON.parse(await env.KV.get("llm:accounts"))), ["P1"]);       // KV is back as it was
+  assert.deepEqual(Object.keys(engineList(w)), ["P1"]);
+  w.failSecretPut = false;
+  delete w.secrets.CFLLM_ACCOUNTS;                                                            // somebody deleted the secret by hand
+  let o = await (await c("/api/llm")).json();
+  assert.equal(o.synced, false); assert.equal(o.accounts.length, 1);
+  assert.equal((await post(c, "/api/llm/sync", {})).status, 200);
+  assert.deepEqual(engineList(w), { P1: { a: a.id, t: a.token } });
+  o = await (await c("/api/llm")).json(); assert.equal(o.synced, true);
+});
+
+test("sync with no accounts is refused", async () => {
+  const { c } = await session();
+  assert.equal((await post(c, "/api/llm/sync", {})).status, 404);
 });
 
 test("old provider keys are gone from the key list and the workflow list knows llm-check", async () => {

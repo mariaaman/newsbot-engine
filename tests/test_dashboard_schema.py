@@ -16,7 +16,11 @@ def models():
     out, lang = {}, None
     for node in tree.body:
         if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "Lang":
-            lang = [e.value for e in node.value.slice.elts]
+            assert ast.unparse(node.value) == "str", "Lang must stay a plain str: the languages come from newsbot/langs.py"
+            import sys
+            sys.path.insert(0, str(ROOT))
+            from newsbot.langs import LANGUAGES
+            lang = sorted(LANGUAGES)
         if isinstance(node, ast.ClassDef):
             fields = {}
             for st in node.body:

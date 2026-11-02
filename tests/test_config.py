@@ -42,6 +42,15 @@ def test_default_language_must_be_listed():
         Config.model_validate({"site": {"languages": ["en"], "default": "bn"}})
 
 
+def test_site_languages_accept_catalog_codes_and_refuse_unknown_or_repeated_ones():
+    cfg = Config.model_validate({"site": {"languages": ["bn", "en", "hi", "ar", "ja"], "default": "bn"}})
+    assert cfg.site.languages == ["bn", "en", "hi", "ar", "ja"]
+    for bad in (["bn", "xx"], ["bn", "bn"], []):
+        with pytest.raises(ValidationError):
+            Config.model_validate({"site": {"languages": bad, "default": "bn"}})
+    assert load_config(TEMPLATE).site.languages == ["bn", "en"]          # the shipped config is unchanged
+
+
 def test_too_many_categories_rejected():
     with pytest.raises(ValidationError):
         Config.model_validate({"site": {"categories": [f"c{i}" for i in range(13)]}})

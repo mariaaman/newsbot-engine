@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import re
 
+from newsbot import langs as L
 from newsbot.llm.mock import MockProvider
 
 
@@ -66,7 +67,7 @@ def _rephrase(stmt: str, lang: str, size: int = 5) -> str:
     """Mock 'paraphrase': short fragments joined by connector words, so no 8-word run of a source survives.
     Gate-clean plumbing for dry runs, deliberately NOT good prose (real models write the real articles)."""
     ws = stmt.replace('"', "").rstrip(".").split()      # the mock never emits quotation marks
-    leads = _LEADS[lang]
+    leads = _LEADS.get(lang, _LEADS["en"])        # a language without sample wording uses the English sample text
     out = " ".join(f"{leads[(i // size) % len(leads)]} {' '.join(ws[i:i + size])}" for i in range(0, len(ws), size))
     return out[:1].upper() + out[1:] + "."
 
@@ -79,21 +80,24 @@ def _write(lang: str):
         fs = json.loads(m.group(1)) if m else {"facts": [], "sources": []}
         facts, sources = fs["facts"], fs["sources"]
         marks = lambda f: "".join(f"[{i}]" for i in f["source_ids"])      # noqa: E731
-        first, second = _HEAD[lang]
+        first, second = _HEAD.get(lang, _HEAD["en"])
         paras = [f"{_rephrase(f['statement'], lang)} {marks(f)}" for f in facts]
         wc = lambda parts: sum(len(p.split()) for p in parts)             # noqa: E731
-        ctx, pool, i = [], _FILLER[lang], 0
-        while wc(paras) + wc(ctx) < _TARGET[lang] + 20:
+        ctx, pool, i = [], _FILLER.get(lang, _FILLER["en"]), 0
+        while wc(paras) + wc(ctx) < _TARGET.get(lang, _TARGET["en"]) + 20:
             ctx.append(" ".join(pool[(i + k) % len(pool)] for k in range(3)))
             i += 3
         head = facts[0]["statement"].rstrip(".").split()[:7] if facts else ["story"]
-        title = ("Developing story: " if lang == "en" else "বিকাশমান খবর: ") + " ".join(head)
+        title = ("বিকাশমান খবর: " if lang == "bn" else "Developing story: ") + " ".join(head)
+        hi = L.title_len(None, lang)[1]
+        while len(title) > hi and " " in title:                          # short-title scripts (ja, zh): keep the sample inside the limit
+            title = title.rsplit(" ", 1)[0]
         day = (sources[0]["published_at"][:10] if sources else "")
         by = {s: [f for f in facts if f["status"] == s] for s in ("confirmed", "reported", "disputed")}
         item = lambda f: f"{_rephrase(f['statement'], lang)} {marks(f)}"  # noqa: E731
         return {"title": title, "summary": _rephrase(facts[0]["statement"], lang) if facts else "No facts.",
                 "body_markdown": f"## {first}\n\n" + "\n\n".join(paras) + f"\n\n## {second}\n\n" + "\n\n".join(ctx),
-                "timeline": [{"time": day, "text": f"{sources[0]['name']} {'first reported' if lang == 'en' else 'প্রথম জানায়'} [{sources[0]['id']}]"}] if sources else [],
+                "timeline": [{"time": day, "text": f"{sources[0]['name']} {'প্রথম জানায়' if lang == 'bn' else 'first reported'} [{sources[0]['id']}]"}] if sources else [],
                 "confirmed": [item(f) for f in by["confirmed"]], "unclear": [item(f) for f in by["reported"]],
                 "disputed": [item(f) for f in by["disputed"]],
                 "sources": [{"id": s["id"]} for s in sources], "category": "world",
@@ -102,5 +106,5 @@ def _write(lang: str):
 
 
 def dry_run_provider() -> MockProvider:
-    return MockProvider({"extract": _extract, "verify": _verify, "write_en": _write("en"), "write_bn": _write("bn"),
-                         "qa_check": {"unsupported": []}, "*": {}})
+    answers = {f"write_{lang}": _write(lang) for lang in L.LANGUAGES}      # every site language the catalog knows
+    return MockProvider({"extract": _extract, "verify": _verify, **answers, "qa_check": {"unsupported": []}, "*": {}})

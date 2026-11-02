@@ -25,7 +25,7 @@ log = logging.getLogger("newsbot.llm")
 
 def load_cf_accounts(env=os.environ) -> list[dict]:
     """Every Cloudflare account that may be used for LLM work: [{label, account_id, token}], any number.
-    Source 1: NEWSBOT_CF_ACCOUNTS_FILE (a JSON file written by scripts/collect_llm_accounts.py from the secrets CFLLM_<LABEL>)
+    Source 1: NEWSBOT_CF_ACCOUNTS_FILE (a JSON file written by scripts/collect_llm_accounts.py from the one GitHub secret CFLLM_ACCOUNTS)
     or NEWSBOT_CF_ACCOUNTS (the same JSON text). Source 2, only when there are none: the single deploy account
     (CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_API_TOKEN). The same Cloudflare account listed twice counts once.
     Bad entries are skipped; the log names a label and a reason, never a value."""

@@ -15,9 +15,8 @@ from newsbot.llm import estimate_tokens
 from newsbot.models import FactSheet, iso, utcnow
 from newsbot.prompts import load_prompt, wrap_untrusted
 
-LANG_NAMES = {"bn": "Bengali", "en": "English", "hi": "Hindi", "ur": "Urdu", "ar": "Arabic", "ja": "Japanese",
-              "zh": "Chinese", "ko": "Korean", "id": "Indonesian", "es": "Spanish", "fr": "French", "de": "German",
-              "ru": "Russian", "pt": "Portuguese", "tr": "Turkish"}
+from newsbot import langs as L
+from newsbot.langs import LANG_NAMES      # every site language, see newsbot/langs.py
 LIST_FIELDS = ("confirmed", "unclear", "disputed")
 MAX_TITLE, MAX_SUMMARY = 300, 1200
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -181,7 +180,9 @@ def build_messages(fs: FactSheet, lang: str, cfg, brain, previous: dict | None =
             system = load_prompt(brain, "write_default")
     cats = getattr(getattr(cfg, "site", None), "categories", None) or []
     system += (f"\n\nLanguage of the article: {lang} ({LANG_NAMES.get(lang, lang)}). "
-               f"Local angle: {cfg.write.local_angle.get(lang, '')}")
+               f"Local angle: {L.local_angle(cfg.write, lang)}")
+    system += (f"\nMinimum length of body_markdown: {L.min_words(cfg.qa, lang)} {L.unit_name(lang)}"
+               f"{' (letters, no spaces)' if L.meta(lang)['spaceless'] else ''}; the article is checked against it.")
     if cats:                                         # the QA gate rejects any other value, so the writer must be told
         system += (f"\nALLOWED CATEGORIES (the \"category\" field must be exactly one of these ids, lowercase, "
                    f"nothing else): {', '.join(cats)}")

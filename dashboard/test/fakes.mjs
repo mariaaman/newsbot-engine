@@ -101,6 +101,7 @@ export function fakeWorld(opts = {}) {
     if (p.endsWith("/actions/secrets") && m === "GET") return J(200, { secrets: Object.keys(w.secrets).map((name) => ({ name, updated_at: "2026-10-20T00:00:00Z" })).concat([{ name: "BRAIN_REPO_TOKEN", updated_at: "2026-10-20T00:00:00Z" }]) });
     if ((r = p.match(/\/actions\/secrets\/([A-Z0-9_]+)$/)) && m === "DELETE") { if (!(r[1] in w.secrets)) return J(404); delete w.secrets[r[1]]; return J(204); }
     if ((r = p.match(/\/actions\/variables\/([A-Z0-9_]+)$/)) && m === "DELETE") { if (!(r[1] in w.vars)) return J(404); delete w.vars[r[1]]; return J(204); }
+    if ((r = p.match(/\/actions\/secrets\/([A-Z0-9_]+)$/)) && m === "PUT" && w.failSecretPut) return J(500, { message: "boom" });
     if ((r = p.match(/\/actions\/secrets\/([A-Z0-9_]+)$/)) && m === "PUT") { const existed = r[1] in w.secrets; w.secrets[r[1]] = body; return J(existed ? 204 : 201); }
     if (p.endsWith("/actions/variables") && m === "GET") return J(200, { variables: Object.entries(w.vars).map(([name, value]) => ({ name, value, updated_at: "2026-10-20T00:00:00Z" })) });
     if ((r = p.match(/\/actions\/variables\/([A-Z0-9_]+)$/)) && m === "PATCH") { if (!(r[1] in w.vars)) return J(404); w.vars[r[1]] = body.value; return J(204); }

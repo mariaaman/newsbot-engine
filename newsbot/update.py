@@ -13,6 +13,7 @@ from pathlib import Path
 
 import yaml
 
+from newsbot import langs as L
 from newsbot.cluster import tokenize
 from newsbot.extract import extract_claims, norm_text, numbers_in
 from newsbot.facts import load_fact_sheet, save_fact_sheet
@@ -29,8 +30,6 @@ log = logging.getLogger("newsbot.update")
 MAX_FACTS = 40
 SAME_FACT = 0.6          # token overlap at or above this = the same fact, rephrased
 CHANGED_FIGURE = 0.4     # similar statement but different figures = the fact changed (candidate correction)
-UPDATE_NOTE = {"en": "Article updated with new verified facts.",
-               "bn": "নতুন যাচাই করা তথ্য যোগ করে প্রতিবেদন হালনাগাদ করা হয়েছে।"}
 
 
 def stamp(now: datetime) -> str:
@@ -190,7 +189,7 @@ def finalize_update(art: dict, prev: dict, lang: str, now: datetime) -> dict:
     art["slug"], art["category"] = prev["slug"], prev["category"]
     seen = {norm_text(e["text"]) for e in prev["timeline"]}
     added = [{"time": e["time"] or stamp(now), "text": e["text"]} for e in art["timeline"] if norm_text(e["text"]) not in seen]
-    art["timeline"] = prev["timeline"] + (added or [{"time": stamp(now), "text": UPDATE_NOTE[lang]}])
+    art["timeline"] = prev["timeline"] + (added or [{"time": stamp(now), "text": L.update_note(lang)}])
     old = prev.get("corrections", [])
     keys = {(c["said"], c["correct"]) for c in old}
     art["corrections"] = old + [{**c, "date": c.get("date") or stamp(now)} for c in art.get("corrections", [])

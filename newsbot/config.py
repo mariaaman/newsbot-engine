@@ -8,7 +8,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-Lang = Literal["bn", "en"]      # languages the SITE publishes in (output)
+Lang = str                      # languages the SITE publishes in (output): a code from newsbot/langs.py (bn, en, hi, ur, ar, ...)
 # Source feeds may be in ANY language (ja, hi, ar, ...): stories are found in many languages and written up
 # in the site languages. A feed language is a short ISO code, e.g. "ja", "zh", "pt".
 
@@ -32,6 +32,17 @@ class SiteCfg(_Base):
                              "sports", "science", "entertainment", "environment", "education"]
     allowed_topics: list[str] = []
     blocked_topics: list[str] = []
+
+    @field_validator("languages")
+    @classmethod
+    def _known_languages(cls, v: list[str]) -> list[str]:
+        from newsbot.langs import LANGUAGES
+        if not v or len(set(v)) != len(v):
+            raise ValueError("site.languages needs at least one language and no repeats")
+        bad = [x for x in v if x not in LANGUAGES]
+        if bad:
+            raise ValueError(f"unsupported site language(s) {bad}; supported: {sorted(LANGUAGES)}")
+        return v
 
     @model_validator(mode="after")
     def _default_in_languages(self) -> "SiteCfg":

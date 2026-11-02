@@ -40,12 +40,15 @@ jobs:
       - name: Collect LLM accounts
         id: llm_accounts
         env:
-          ALL_SECRETS_JSON: ${{ toJSON(secrets) }}
+          CFLLM_ACCOUNTS: ${{ secrets.CFLLM_ACCOUNTS }}
         run: python scripts/collect_llm_accounts.py
       - name: Check every account
         id: check
         continue-on-error: true
         run: python -m newsbot llmcheck --brain brain
+      - name: Remove the LLM accounts file (it holds API tokens; no later step needs it)
+        if: always()
+        run: rm -f "${NEWSBOT_CF_ACCOUNTS_FILE:-/nonexistent}"
       - name: Save the result in the brain repo
         if: always()
         env:

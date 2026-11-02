@@ -10,8 +10,6 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
-from newsbot.diag import DIAG  # noqa: E402  (run diagnostics; public logs get codes/counts only)
-
 log = logging.getLogger("newsbot.llm")
 MAX_RETRY_TOKENS = 14000      # the most a cut-off answer is given on its second try
 
@@ -21,11 +19,9 @@ class LLMError(Exception):
 
 
 class RateLimited(LLMError):
-    def __init__(self, retry_after: float | None = None, kind: str = "rate", code: int | None = None):
+    def __init__(self, retry_after: float | None = None):
         super().__init__("rate limited")
         self.retry_after = retry_after
-        self.kind = kind          # "rate" (per minute) | "capacity" (provider busy) | "daily" (free allowance spent until 00:00 UTC)
-        self.code = code          # the API's numeric error code, when it sent one
 
 
 def safe_reason(e: Exception) -> str:
@@ -176,8 +172,6 @@ class LLM:
         self.picker = picker or PoolPicker(budget)
         self._clock = clock
         self.deadline: float | None = None
-        self._rl_streak = 0                  # consecutive calls that failed ONLY because every account was rate limited
-        self._rl_block_until = 0.0
 
     # ---- run time limit: the hourly job is killed at 30 minutes and then NOTHING is committed, so the run must end by itself ----
     def set_deadline(self, at: float | None) -> None:
@@ -191,10 +185,19 @@ class LLM:
     def has_time(self, seconds: float) -> bool:
         return self.time_left() >= seconds
 
+    def tier_of(self, task: str) -> str:
+        """The tier of a task. A writer task of a language that has no entry of its own (write_hi, write_ar, ...: any language
+        added in the dashboard) uses the tier of `write_default`, else the one of `write_en`."""
+        if task in self.tasks:
+            return self.tasks[task]
+        if task.startswith("write_"):
+            for fallback in ("write_default", "write_en"):
+                if fallback in self.tasks:
+                    return self.tasks[fallback]
+        raise LLMError(f"unknown task: {task}")
+
     def chain(self, task: str) -> list[tuple[str, str]]:
-        if task not in self.tasks:
-            raise LLMError(f"unknown task: {task}")
-        tier = self.tasks[task]
+        tier = self.tier_of(task)
         out: list[tuple[str, str]] = []
         for e in self.tiers.get(tier, []):
             names = expand_pool(self.providers, e["provider"])
@@ -218,19 +221,12 @@ class LLM:
             try:
                 return prov.chat(model, messages, json_mode=json_mode, max_tokens=max_tokens, task=task)
             except RateLimited as e:
-                if e.kind == "daily":
-                    # the account's free allowance is spent: waiting cannot help before 00:00 UTC. Remember it for the day so
-                    # no later call (or run) wastes time on this account.
-                    if self.budget is not None and hasattr(self.budget, "mark_spent"):
-                        self.budget.mark_spent(prov.name)
-                    raise ProviderError("daily allowance spent") from e
                 if attempt == retries:
-                    raise ProviderError(f"rate limited after retries {e.kind}") from e
+                    raise ProviderError("rate limited after retries") from e
                 wait = min(e.retry_after if e.retry_after is not None else delay, self.max_delay)
                 if self.time_left() < wait + 45:                  # waiting would eat the time the run needs to commit its work
                     raise BudgetExhausted("run time limit reached while rate limited") from e
-                log.warning("429 task=%s provider=%s attempt=%d wait=%.1fs kind=%s code=%s", task, prov.name, attempt + 1, wait,
-                            e.kind, e.code if e.code is not None else "-")
+                log.warning("429 task=%s provider=%s attempt=%d wait=%.1fs", task, prov.name, attempt + 1, wait)
                 self._sleep(wait)
                 delay = min(delay * 2, self.max_delay)
         raise ProviderError("unreachable")
@@ -244,9 +240,6 @@ class LLM:
         tried = False
         if self.time_left() < 45:
             raise BudgetExhausted(f"run time limit reached before task {task}")
-        if self._clock() < self._rl_block_until:       # every account just proved rate limited: queue instead of waiting again
-            raise BudgetExhausted(f"all accounts rate limited for task {task}")
-        rl_only = True                                  # did every attempt of this call fail on a rate limit?
         chain = self.chain(task)
         bad_models: set[str] = set()        # a model whose answer failed the schema twice is not retried on other accounts
         for pos, (pname, model) in enumerate(chain):
@@ -258,34 +251,22 @@ class LLM:
             prov = self.providers[pname]
             msgs = list(messages)
             tokens_out = max_tokens                 # may grow once if the answer was cut off (see below)
-            t_call = self._clock()
             # another entry is waiting behind this one: give up on a 429 quickly and let it take over
             retries = self.max_retries if pos == len(chain) - 1 else min(1, self.max_retries)
             try:
                 for repair in (False, True):
-                    t_call = self._clock()
                     resp = self._call(prov, model, msgs, want_json, tokens_out, task, retries)
-                    secs = self._clock() - t_call
                     self.picker.warm(pname)
-                    rl_only, self._rl_streak = False, 0
                     if self.budget:
                         self.budget.record(pname, model, resp.total_tokens or est,
                                            prompt=resp.prompt_tokens, completion=resp.completion_tokens)
-                    log.info("llm task=%s provider=%s model=%s tokens=%d secs=%.0f finish=%s", task, pname, model,
-                             resp.total_tokens, secs, resp.finish_reason or "-")
+                    log.info("llm task=%s provider=%s model=%s tokens=%d", task, pname, model, resp.total_tokens)
                     if not want_json:
-                        DIAG.add("llm", task=task, provider=pname, model=model, ok=True, tokens=resp.total_tokens,
-                                 secs=round(secs, 1), finish=resp.finish_reason)
                         return resp.text
                     try:
-                        out = validate(parse_json(resp.text), schema)
-                        DIAG.add("llm", task=task, provider=pname, model=model, ok=True, tokens=resp.total_tokens,
-                                 secs=round(secs, 1), finish=resp.finish_reason)
-                        return out
+                        return validate(parse_json(resp.text), schema)
                     except (ValueError, TypeError) as e:  # JSONDecodeError and pydantic ValidationError are ValueErrors
                         last = SchemaError(f"invalid output for task {task}: {type(e).__name__}")
-                        DIAG.add("llm", task=task, provider=pname, model=model, ok=False, tokens=resp.total_tokens,
-                                 secs=round(secs, 1), finish=resp.finish_reason, reason=f"invalid_output:{type(e).__name__}")
                         if repair:
                             break
                         if resp.finish_reason == "length":
@@ -313,21 +294,11 @@ class LLM:
                 continue
             except ProviderError as e:
                 last = e
-                if not isinstance(e.__cause__, RateLimited):
-                    rl_only = False
                 self.picker.cool(pname)
                 if self.budget and hasattr(self.budget, "record_failure"):
                     self.budget.record_failure(pname, model, safe_reason(e))
-                log.warning("provider failed task=%s provider=%s reason=%s secs=%.0f, trying next", task, pname,
-                            safe_reason(e), self._clock() - t_call)
-                DIAG.add("llm", task=task, provider=pname, model=model, ok=False, secs=round(self._clock() - t_call, 1),
-                         reason=safe_reason(e))
+                log.warning("provider failed task=%s provider=%s reason=%s, trying next", task, pname, safe_reason(e))
                 continue
         if not tried:
             raise BudgetExhausted(f"daily LLM budget reached for task {task}")
-        if rl_only:
-            self._rl_streak += 1
-            if self._rl_streak >= 2:      # twice in a row every account was rate limited: stop asking for a while
-                self._rl_block_until = self._clock() + 300
-                log.warning("all accounts rate limited %d calls in a row: no LLM calls for 5 minutes", self._rl_streak)
         raise last or LLMError("all providers failed")

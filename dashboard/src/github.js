@@ -1,4 +1,5 @@
 // GitHub access for the dashboard. Reuses the approve Worker's tested helpers (worker/index.js): gh(), commit(), deploy(), act().
+import { CODES } from "./langs.js";
 import { gh, b64utf8, commit, deploy, act, draftRef, applyEdits, split, readField, findDraft } from "../../worker/index.js";
 import { sealToBase64 } from "./sealedbox.js";
 import { HttpError } from "./util.js";
@@ -75,11 +76,12 @@ export async function brainSnapshot(env) {
   const tree = (alias, path) => `${alias}: object(expression: ${JSON.stringify(`${branch}:${path}`)}) { ... on Tree { entries { name } } }`;
   const data = await graphql(env, `{ repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) {
     ${blob("newsbot", "config/newsbot.yaml")} ${blob("usage", "state/usage.json")} ${blob("cooldowns", "state/cooldowns.json")} ${blob("deployed", "state/deployed.json")}
-    ${tree("pendingBn", "pending/bn")} ${tree("pendingEn", "pending/en")} ${tree("contentBn", "content/bn")} ${tree("contentEn", "content/en")} } }`);
+    ${CODES.map((c) => `${tree("p_" + c, "pending/" + c)} ${tree("c_" + c, "content/" + c)}`).join(" ")} } }`);
   const r = data.repository || {};
   const n = (k) => (r[k]?.entries || []).filter((e) => e.name.endsWith(".md")).length;
+  const per = (prefix) => Object.fromEntries(CODES.map((c) => [c, n(prefix + c)]).filter(([c, k]) => k > 0 || c === "bn" || c === "en"));   // the screens read a missing language as 0
   return { newsbot: r.newsbot?.text || "", usage: r.usage?.text || "", cooldowns: r.cooldowns?.text || "", deployed: r.deployed?.text || "",
-    counts: { pending: { bn: n("pendingBn"), en: n("pendingEn") }, published: { bn: n("contentBn"), en: n("contentEn") } } };
+    counts: { pending: per("p_"), published: per("c_") } };
 }
 
 export async function runs(env, limit = 20) {
@@ -104,12 +106,6 @@ export async function listSecrets(env) {
 export async function deleteSecret(env, name) {
   const { engine } = repos(env);
   const res = await gh(env, `/repos/${engine}/actions/secrets/${q(name)}`, { method: "DELETE" });
-  need(res, 204, 404);
-  return res.status === 204 ? "deleted" : "absent";
-}
-export async function deleteVar(env, name) {
-  const { engine } = repos(env);
-  const res = await gh(env, `/repos/${engine}/actions/variables/${q(name)}`, { method: "DELETE" });
   need(res, 204, 404);
   return res.status === 204 ? "deleted" : "absent";
 }

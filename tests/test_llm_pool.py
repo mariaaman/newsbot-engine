@@ -221,22 +221,23 @@ def test_the_deploy_account_is_only_the_fallback_when_there_is_no_pool_account()
 
 # ---------- collect script ----------
 
-def test_collect_script_keeps_only_cfllm_secrets_and_exports_a_file_path_never_the_values():
+def test_collect_script_checks_the_one_secret_and_exports_a_file_path_never_the_values():
+    import contextlib
     import importlib.util
+    import io
     spec = importlib.util.spec_from_file_location("collect", Path(__file__).resolve().parent.parent / "scripts" / "collect_llm_accounts.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    secrets = {"CFLLM_PHONE1": json.dumps({"a": ID(1), "t": "tok-secret-1"}), "CFLLM_PHONE2": json.dumps({"a": ID(2), "t": "tok-secret-2"}),
-               "CFLLM_BROKEN": "not json", "CFLLM_SHORT": json.dumps({"a": "zz", "t": "t"}), "BRAIN_REPO_TOKEN": "ghp_x", "CFLLM_ID_PHONE1": ID(1)}
-    accts, problems = mod.collect(secrets)
-    assert [a["label"] for a in accts] == ["PHONE1", "PHONE2"] and len(problems) == 3 + 0 or len(problems) >= 2
+    secret = json.dumps({"PHONE1": {"a": ID(1), "t": "tok-secret-1"}, "PHONE2": {"a": ID(2), "t": "tok-secret-2"},
+                         "BROKEN": "x", "SHORT": {"a": "zz", "t": "t"}, "lower": {"a": ID(3), "t": "t"}})
+    accts, problems = mod.collect(json.loads(secret))
+    assert [a["label"] for a in accts] == ["PHONE1", "PHONE2"] and len(problems) == 3
     with tempfile.TemporaryDirectory() as d:
         env_file = Path(d) / "gh_env"
         env_file.write_text("")
-        import io, contextlib
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
-            assert mod.main({"ALL_SECRETS_JSON": json.dumps(secrets), "GITHUB_ENV": str(env_file), "RUNNER_TEMP": d}) == 0
+            assert mod.main({"CFLLM_ACCOUNTS": secret, "GITHUB_ENV": str(env_file), "RUNNER_TEMP": d}) == 0
         out = buf.getvalue()
         assert "labels=PHONE1,PHONE2" in out and "tok-secret" not in out and ID(1) not in out
         exported = env_file.read_text()
@@ -244,11 +245,15 @@ def test_collect_script_keeps_only_cfllm_secrets_and_exports_a_file_path_never_t
         written = Path(exported.split("=", 1)[1].strip())
         assert json.loads(written.read_text())[0]["token"] == "tok-secret-1" and (os.stat(written).st_mode & 0o077) == 0      # owner only
         assert [a["label"] for a in load_cf_accounts({"NEWSBOT_CF_ACCOUNTS_FILE": str(written)})] == ["PHONE1", "PHONE2"]       # the engine reads it back
-    with tempfile.TemporaryDirectory() as d:
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            assert mod.main({"ALL_SECRETS_JSON": "{}", "RUNNER_TEMP": d}) == 0                 # no account at all is not a crash here
-        assert "accounts=0" in buf.getvalue()
+    for env in ({}, {"CFLLM_ACCOUNTS": ""}):                                          # no secret yet is not a crash: the deploy account is the fallback
+        with tempfile.TemporaryDirectory() as d:
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                assert mod.main({**env, "RUNNER_TEMP": d}) == 0
+            assert "accounts=0" in buf.getvalue()
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        assert mod.main({"CFLLM_ACCOUNTS": "not json", "RUNNER_TEMP": tempfile.gettempdir()}) == 1
 
 
 # ---------- health, embedder, account check ----------

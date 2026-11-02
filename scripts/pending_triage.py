@@ -23,6 +23,9 @@ from pathlib import Path
 
 import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from newsbot import langs as LG  # noqa: E402  (stdlib only)
+
 MARKER = re.compile(r"\[S\d+(?:\s*[,;]\s*S\d+)*\]|\(\s*S\d+(?:\s*[,;]\s*S\d+)*\s*\)")
 DEFAULT_MIN = {"bn": 450, "en": 500}
 STOP = set("the a an of in to and for on as after with by at is are was were from over into".split())
@@ -38,9 +41,10 @@ def split_front(text: str) -> tuple[dict, str]:
         return {}, parts[2]
 
 
-def count_words(body: str) -> int:
+def count_words(body: str, lang: str = "en") -> int:
     body = re.sub(r"(?m)^#.*$", "", MARKER.sub(" ", body))
-    return len([w for w in body.split() if w.strip(".,;:!?\"'()[]“”‘’।")])
+    ws = [w for w in body.split() if w.strip(".,;:!?\"'()[]“”‘’।")]
+    return LG.length_units(body, lang, ws)             # letters for a script without spaces (ja, zh, th)
 
 
 def tokens(title: str) -> frozenset:
@@ -67,7 +71,7 @@ def triage(brain: Path) -> dict:
             name = f"pending/{lang}/{f.name}"
             pend = fm.get("pending") or {}
             fails, review = list(pend.get("failures") or []), list(pend.get("review") or [])
-            words, need = count_words(body), min_words.get(lang, 300)
+            words, need = count_words(body, lang), min_words.get(lang, LG.meta(lang)["min_words"])
             tk = tokens(fm.get("title", ""))
             dup = next((n for l, n, t in seen if l == lang and jaccard(tk, t) >= 0.5), None)
             seen.append((lang, name, tk))

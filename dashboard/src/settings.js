@@ -1,4 +1,5 @@
 // Settings: read the two config files, apply validated edits with the comment-preserving YAML editor, commit, then ask CI to validate.
+import { CATALOG, CODES } from "./langs.js";
 import { FIELDS, GROUPS, findField, coerce, TASKS, PROVIDERS, TIERS, KEY_RE, MODEL_RE } from "./schema.js";
 import { get, set, remove, listInsert, listRemove, flatten, reader } from "./yamledit.js";
 import { getFile, putFile, dispatch, history } from "./github.js";
@@ -20,6 +21,8 @@ export async function describe(env) {
     texts[path] = f.text;
   }
   const read = Object.fromEntries(Object.entries(texts).map(([k, t]) => [k, reader(t)]));
+  const nrd = read["config/newsbot.yaml"];
+  out.languages = { enabled: (nrd && nrd(["site", "languages"])) || [], default: (nrd && nrd(["site", "default"])) || null, catalog: CATALOG };
   for (const f of FIELDS) {
     const v = read[f.file] ? read[f.file](f.path) : undefined;
     out.fields.push({ ...optionsFor(f), value: v === undefined ? null : v, present: v !== undefined });
@@ -42,14 +45,41 @@ export async function describe(env) {
   return out;
 }
 
+/** The site's output languages for the dashboard's tabs: [{code, native, name, rtl}] in site order, and the default. */
+export async function languagesOf(env) {
+  const f = await getFile(env, "config/newsbot.yaml");
+  const rd = f ? reader(f.text) : null;
+  const codes = ((rd && rd(["site", "languages"])) || ["bn", "en"]).filter((c) => CODES.includes(c));
+  return { languages: codes.map((c) => CATALOG.find((l) => l.code === c)).map(({ code, native, name, rtl }) => ({ code, native, name, rtl })),
+           default: (rd && rd(["site", "default"])) || codes[0] || "bn" };
+}
+
 /** One change -> new text + a short summary. Throws HttpError(400) with a plain message on anything not allowed. */
 export function applyChange(file, text, ch) {
   must(isObj(ch), 400, "bad change");
   try {
+    if (ch.kind === "languages") {                    // add or remove one OUTPUT language of the site (the catalog lives in langs.js)
+      must(file === "config/newsbot.yaml", 400, "languages are set in newsbot.yaml");
+      must(typeof ch.code === "string" && CODES.includes(ch.code), 400, "unknown language");
+      const cur = get(text, ["site", "languages"]);
+      must(Array.isArray(cur) && cur.length, 400, "site.languages was not found in newsbot.yaml");
+      const def = get(text, ["site", "default"]);
+      if (ch.op === "add") {
+        must(!cur.includes(ch.code), 400, "this language is already on the site");
+        return { text: set(text, ["site", "languages"], [...cur, ch.code]), summary: `languages: add ${ch.code}` };
+      }
+      must(ch.op === "remove", 400, "bad language edit");
+      must(cur.includes(ch.code), 400, "this language is not on the site");
+      must(ch.code !== def, 400, "the default language cannot be removed: pick another default first");
+      must(cur.length > 1, 400, "the site needs at least one language");
+      return { text: set(text, ["site", "languages"], cur.filter((x) => x !== ch.code)), summary: `languages: remove ${ch.code}` };
+    }
     if (ch.kind === "field") {
       const field = findField(file, ch.path);
       must(field, 400, "that setting cannot be edited here");
       const v = coerce(field, ch.value);
+      if (file === "config/newsbot.yaml" && ch.path.join(".") === "site.default")
+        must((get(text, ["site", "languages"]) || []).includes(v), 400, "the default language must be one of the site's languages");
       return { text: set(text, field.path, v), summary: `${field.path.join(".")}=${Array.isArray(v) ? v.length + " items" : String(v).slice(0, 30)}` };
     }
     must(file === "config/llm.yaml", 400, "that edit belongs to llm.yaml");
