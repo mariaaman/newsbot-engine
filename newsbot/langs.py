@@ -9,7 +9,9 @@ Per language:
   rtl           right-to-left script (the page gets dir="rtl")
   spaceless     the script has no spaces between words (ja, zh, th): length is counted in CHARACTERS and `min_words`
                 means characters for that language (a word count would be tiny and fail every article)
-  names         the capitalised-Latin-name check of the QA gate is meaningful (False for German: it capitalises every noun)
+  names         the capitalised-Latin-name check of the QA gate is meaningful. Only for English (the fact sheet is English): in every other
+                language the writer translates place and organisation names (Estados Unidos, États-Unis), which the check would reject
+                again and again, and German capitalises every noun. The number check stays on for every language.
   min_words/title_len  QA length limits (qa.min_words / qa.title_len in newsbot.yaml override them)
   angle         default for write.local_angle        disclosure   default for site.ai_disclosure
   update_note   timeline line of an updated article
@@ -181,24 +183,24 @@ _NOTE = {
 _BASE = {
     "bn": ("Bengali", "বাংলা", "bn-BD", False, False, True, 450, (15, 110)),
     "en": ("English", "English", "en", False, False, True, 500, (20, 100)),
-    "hi": ("Hindi", "हिन्दी", "hi-IN", False, False, True, 450, (15, 110)),
-    "ur": ("Urdu", "اردو", "ur-PK", True, False, True, 450, (15, 110)),
-    "ar": ("Arabic", "العربية", "ar", True, False, True, 400, (15, 110)),
-    "ne": ("Nepali", "नेपाली", "ne-NP", False, False, True, 400, (15, 110)),
-    "id": ("Indonesian", "Bahasa Indonesia", "id-ID", False, False, True, 450, (20, 110)),
-    "es": ("Spanish", "Español", "es", False, False, True, 450, (20, 110)),
-    "fr": ("French", "Français", "fr", False, False, True, 450, (20, 110)),
+    "hi": ("Hindi", "हिन्दी", "hi-IN", False, False, False, 450, (15, 110)),
+    "ur": ("Urdu", "اردو", "ur-PK", True, False, False, 450, (15, 110)),
+    "ar": ("Arabic", "العربية", "ar", True, False, False, 400, (15, 110)),
+    "ne": ("Nepali", "नेपाली", "ne-NP", False, False, False, 400, (15, 110)),
+    "id": ("Indonesian", "Bahasa Indonesia", "id-ID", False, False, False, 450, (20, 110)),
+    "es": ("Spanish", "Español", "es", False, False, False, 450, (20, 110)),
+    "fr": ("French", "Français", "fr", False, False, False, 450, (20, 110)),
     "de": ("German", "Deutsch", "de", False, False, False, 400, (20, 110)),
-    "pt": ("Portuguese", "Português", "pt", False, False, True, 450, (20, 110)),
-    "ru": ("Russian", "Русский", "ru", False, False, True, 400, (20, 110)),
-    "tr": ("Turkish", "Türkçe", "tr", False, False, True, 400, (20, 110)),
-    "ja": ("Japanese", "日本語", "ja", False, True, True, 900, (10, 60)),
-    "zh": ("Chinese", "中文", "zh-CN", False, True, True, 800, (10, 60)),
-    "ko": ("Korean", "한국어", "ko", False, False, True, 350, (12, 70)),
-    "fa": ("Persian", "فارسی", "fa-IR", True, False, True, 400, (15, 110)),
-    "vi": ("Vietnamese", "Tiếng Việt", "vi-VN", False, False, True, 550, (20, 110)),
-    "th": ("Thai", "ไทย", "th-TH", False, True, True, 1400, (15, 110)),
-    "sw": ("Swahili", "Kiswahili", "sw", False, False, True, 400, (20, 110)),
+    "pt": ("Portuguese", "Português", "pt", False, False, False, 450, (20, 110)),
+    "ru": ("Russian", "Русский", "ru", False, False, False, 400, (20, 110)),
+    "tr": ("Turkish", "Türkçe", "tr", False, False, False, 400, (20, 110)),
+    "ja": ("Japanese", "日本語", "ja", False, True, False, 900, (10, 60)),
+    "zh": ("Chinese", "中文", "zh-CN", False, True, False, 800, (10, 60)),
+    "ko": ("Korean", "한국어", "ko", False, False, False, 350, (12, 70)),
+    "fa": ("Persian", "فارسی", "fa-IR", True, False, False, 400, (15, 110)),
+    "vi": ("Vietnamese", "Tiếng Việt", "vi-VN", False, False, False, 550, (20, 110)),
+    "th": ("Thai", "ไทย", "th-TH", False, True, False, 1400, (15, 110)),
+    "sw": ("Swahili", "Kiswahili", "sw", False, False, False, 400, (20, 110)),
 }
 _ANGLE = {
     "bn": "Explain what this means for readers in Bangladesh.",

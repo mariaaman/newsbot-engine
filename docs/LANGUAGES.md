@@ -32,8 +32,9 @@ accounts if the allowance runs out. With `routing_mode: same_language` a languag
 ## Quality limits you should know
 * Every translated label, notice and prompt in the catalog is a **first draft without a native-speaker review**. Have a speaker of each language
   you publish in read the labels, the AI notice and a few articles before you rely on it, above all the trust pages (AdSense reviews them).
-* The deterministic gates are strongest for Latin-script languages: the number check works for every script, the capitalised-name check is
-  Latin-only (inert for scripts without capitals) and is switched off for German (it capitalises every noun).
+* The number check works for every script. The capitalised-name check runs for English (and Bengali) only: in every other language the writer
+  translates place and organisation names (Estados Unidos, États-Unis), which the check rejected again and again in a real run, and German
+  capitalises every noun. The LLM fact check still covers claims in every language.
 * `bn_fluency_flags` (the Bengali evaluation) exists only for Bengali.
 * Hugo itself was not available where this was built: the first build with a new language is the real test (`hourly` or `deploy`; the log shows
   `languages=...` from gen_site_config).

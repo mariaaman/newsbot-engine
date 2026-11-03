@@ -234,6 +234,9 @@ def test_workers_ai_understands_older_and_responses_style_answers_and_refuses_an
         assert False
     except ProviderError as e:
         assert "empty" in str(e)
+    cut = {"choices": [{"finish_reason": "length", "message": {"content": None, "reasoning_content": "thinking"}}], "usage": {"prompt_tokens": 9, "completion_tokens": 256}}
+    r = WorkersAIProvider("a", "t" * 10, fake_transport(body=cut)).chat("m", MSG)
+    assert r.text == "" and r.finish_reason == "length"        # cut off while thinking: handed to the router, which asks again with more room
 
 
 def test_workers_ai_asks_again_without_an_optional_field_the_model_rejects_and_remembers_it():

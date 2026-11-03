@@ -10,8 +10,13 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
+from newsbot.diag import DIAG
+
 log = logging.getLogger("newsbot.llm")
 MAX_RETRY_TOKENS = 14000      # the most a cut-off answer is given on its second try
+
+
+RL_BLOCK_S = 300     # seconds without any LLM call after two calls in a row where every account was rate limited
 
 
 class LLMError(Exception):
@@ -19,9 +24,14 @@ class LLMError(Exception):
 
 
 class RateLimited(LLMError):
-    def __init__(self, retry_after: float | None = None):
+    """kind: "rate" (too many requests per minute), "capacity" (the platform is busy) or "daily" (the free daily allowance of the
+    account is spent: it cannot clear before 00:00 UTC, so waiting or retrying is pointless). code: the API's own error code."""
+
+    def __init__(self, retry_after: float | None = None, kind: str = "rate", code: int | None = None):
         super().__init__("rate limited")
         self.retry_after = retry_after
+        self.kind = kind
+        self.code = code
 
 
 def safe_reason(e: Exception) -> str:
@@ -166,12 +176,16 @@ class LLM:
         self.max_retries = int(r.get("max_retries", 3))
         self.base_delay = float(r.get("base_delay_s", 2))
         self.max_delay = float(r.get("max_delay_s", 60))
+        self.fast_retries = int(r.get("fast_retries", 1))     # a 429 on an entry that has another entry behind it: this many quick retries
         self.providers = providers
         self.budget = budget
         self._sleep = sleep
         self.picker = picker or PoolPicker(budget)
         self._clock = clock
         self.deadline: float | None = None
+        self._rl_streak = 0                 # calls in a row where EVERY account answered 429
+        self._rl_block_until = 0.0          # clock time before which nothing is sent (see RL_BLOCK_S)
+        self._spent: set[str] = set()       # accounts whose daily allowance the API itself said is spent
 
     # ---- run time limit: the hourly job is killed at 30 minutes and then NOTHING is committed, so the run must end by itself ----
     def set_deadline(self, at: float | None) -> None:
@@ -221,6 +235,8 @@ class LLM:
             try:
                 return prov.chat(model, messages, json_mode=json_mode, max_tokens=max_tokens, task=task)
             except RateLimited as e:
+                if e.kind == "daily":                              # the allowance is gone for the day: no wait, no retry
+                    raise ProviderError("daily allowance spent") from e
                 if attempt == retries:
                     raise ProviderError("rate limited after retries") from e
                 wait = min(e.retry_after if e.retry_after is not None else delay, self.max_delay)
@@ -240,10 +256,14 @@ class LLM:
         tried = False
         if self.time_left() < 45:
             raise BudgetExhausted(f"run time limit reached before task {task}")
+        if self._rl_block_until and self._clock() < self._rl_block_until:
+            raise BudgetExhausted(f"LLM paused: every account was rate limited just now, asking again in "
+                                  f"{int(self._rl_block_until - self._clock())}s (task {task})")
         chain = self.chain(task)
+        rl_fail = other_fail = 0                  # how the entries of this call failed (for the rate-limit streak)
         bad_models: set[str] = set()        # a model whose answer failed the schema twice is not retried on other accounts
         for pos, (pname, model) in enumerate(chain):
-            if model in bad_models:
+            if model in bad_models or pname in self._spent:
                 continue
             if self.budget and not self.budget.can_spend(pname, model, est, est_out=max_tokens):
                 continue
@@ -252,15 +272,21 @@ class LLM:
             msgs = list(messages)
             tokens_out = max_tokens                 # may grow once if the answer was cut off (see below)
             # another entry is waiting behind this one: give up on a 429 quickly and let it take over
-            retries = self.max_retries if pos == len(chain) - 1 else min(1, self.max_retries)
+            retries = self.max_retries if pos == len(chain) - 1 else min(self.fast_retries, self.max_retries)
             try:
                 for repair in (False, True):
+                    t0 = time.monotonic()
                     resp = self._call(prov, model, msgs, want_json, tokens_out, task, retries)
+                    secs = round(time.monotonic() - t0, 1)
+                    self._rl_streak = 0
                     self.picker.warm(pname)
                     if self.budget:
                         self.budget.record(pname, model, resp.total_tokens or est,
                                            prompt=resp.prompt_tokens, completion=resp.completion_tokens)
-                    log.info("llm task=%s provider=%s model=%s tokens=%d", task, pname, model, resp.total_tokens)
+                    log.info("llm task=%s provider=%s model=%s tokens=%d secs=%.1f finish=%s", task, pname, model, resp.total_tokens,
+                             secs, resp.finish_reason or "-")
+                    DIAG.add("llm", task=task, provider=pname, model=model, ok=True, tokens=resp.total_tokens, secs=secs,
+                             finish=resp.finish_reason or "")
                     if not want_json:
                         return resp.text
                     try:
@@ -295,10 +321,25 @@ class LLM:
             except ProviderError as e:
                 last = e
                 self.picker.cool(pname)
-                if self.budget and hasattr(self.budget, "record_failure"):
-                    self.budget.record_failure(pname, model, safe_reason(e))
-                log.warning("provider failed task=%s provider=%s reason=%s, trying next", task, pname, safe_reason(e))
+                cause = e.__cause__ if isinstance(e.__cause__, RateLimited) else None
+                reason = "daily_allowance_spent" if cause is not None and cause.kind == "daily" else safe_reason(e)
+                if cause is not None and cause.kind == "daily":
+                    self._spent.add(pname)                         # not asked again in this run ...
+                    if self.budget and hasattr(self.budget, "mark_spent"):
+                        self.budget.mark_spent(pname)              # ... nor in later runs of the same day
+                else:
+                    rl_fail, other_fail = rl_fail + (cause is not None), other_fail + (cause is None)
+                    if self.budget and hasattr(self.budget, "record_failure"):
+                        self.budget.record_failure(pname, model, safe_reason(e))
+                log.warning("provider failed task=%s provider=%s reason=%s, trying next", task, pname, reason)
+                DIAG.add("llm", task=task, provider=pname, model=model, ok=False, secs=round(time.monotonic() - t0, 1), reason=reason,
+                         **({"code": cause.code} if cause is not None and cause.code is not None else {}))
                 continue
         if not tried:
             raise BudgetExhausted(f"daily LLM budget reached for task {task}")
+        if rl_fail and not other_fail:                          # every account that was asked answered 429
+            self._rl_streak += 1
+            if self._rl_streak >= 2:
+                self._rl_block_until = self._clock() + RL_BLOCK_S
+                log.warning("every account rate limited twice in a row: no LLM calls for %ds (story queued)", RL_BLOCK_S)
         raise last or LLMError("all providers failed")

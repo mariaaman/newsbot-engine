@@ -82,15 +82,17 @@ def test_every_catalog_language_writes_an_article_that_passes_every_hard_gate_in
         assert r.failures == [] and r.review == [], (lang, r.failures, r.review)
 
 
-def test_german_skips_the_capitalised_name_check_but_still_fails_an_invented_number():
+def test_the_capitalised_name_check_runs_for_english_only_because_other_languages_translate_names():
+    assert [c for c, m in L.LANGUAGES.items() if m["names"]] == ["bn", "en"]
     cfg = make_cfg()
-    art, _ = write_article(dry_llm(), None, cfg, STORIES["ev-metro"], "de")
-    art = {**art, "body_markdown": art["body_markdown"].replace("\n\n## ", "\n\nDie Regierung Kanzlerin Bundestag Zuwanderung.\n\n## ", 1)}
-    assert "unsupported_name" not in run_gates(art, STORIES["ev-metro"], "de", cfg, recent=[], run_llm_check=False).failures
-    en = {**art}
-    assert "unsupported_name" in run_gates(en, STORIES["ev-metro"], "en", cfg, recent=[], run_llm_check=False).failures
-    bad = {**art, "body_markdown": art["body_markdown"].replace("\n\n## ", "\n\nEs gab 98765 Fälle.\n\n## ", 1)}
-    assert "unsupported_number" in run_gates(bad, STORIES["ev-metro"], "de", cfg, recent=[], run_llm_check=False).failures
+    art, _ = write_article(dry_llm(), None, cfg, STORIES["ev-metro"], "es")
+    art = {**art, "body_markdown": art["body_markdown"].replace("\n\n## ", "\n\nEl presidente de Estados Unidos y Naciones Unidas.\n\n## ", 1)}
+    for lang in ("es", "fr", "de", "pt", "id"):          # real log 2026-11-02: es/fr drafts failed again and again on translated place names
+        assert "unsupported_name" not in run_gates(art, STORIES["ev-metro"], lang, cfg, recent=[], run_llm_check=False).failures, lang
+    assert "unsupported_name" in run_gates(art, STORIES["ev-metro"], "en", cfg, recent=[], run_llm_check=False).failures
+    bad = {**art, "body_markdown": art["body_markdown"].replace("\n\n## ", "\n\nHubo 98765 casos.\n\n## ", 1)}
+    for lang in ("es", "de", "ja"):                         # the number check stays on everywhere
+        assert "unsupported_number" in run_gates(bad, STORIES["ev-metro"], lang, cfg, recent=[], run_llm_check=False).failures, lang
 
 
 def test_writer_prompt_names_the_language_the_local_angle_and_the_length_unit():

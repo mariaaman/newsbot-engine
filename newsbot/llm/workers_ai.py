@@ -128,12 +128,15 @@ class WorkersAIProvider:
         if isinstance(data, dict) and data.get("success") is False:
             raise ProviderError("workers ai call failed")
         text = _text_of(data)
-        if text is None or not text.strip():
-            raise ProviderError("empty reply")        # e.g. a reasoning model used every token on thinking
-        u = (data.get("usage") or (data.get("result") or {}).get("usage") or {}) if isinstance(data, dict) else {}
         fin = ""
         if isinstance(data, dict) and isinstance(data.get("choices"), list) and data["choices"] and isinstance(data["choices"][0], dict):
             fin = str(data["choices"][0].get("finish_reason") or "")
+        if text is None or not text.strip():
+            if fin == "length":
+                text = ""        # a reasoning model spent every token thinking: the router asks again with more room
+            else:
+                raise ProviderError("empty reply")
+        u = (data.get("usage") or (data.get("result") or {}).get("usage") or {}) if isinstance(data, dict) else {}
         return Response(text, u.get("prompt_tokens", 0), u.get("completion_tokens", 0), model, self.name, fin)
 
     def list_models(self) -> list[str]:

@@ -336,3 +336,32 @@ def test_llmcheck_command_writes_the_report_and_exits_3_when_any_account_fails_o
             assert rc == 3 and json.loads(out.read_text())["summary"] == {"accounts": 0, "ok": 0, "failed": 0}
         finally:
             os.environ.update({k: v for k, v in saved.items() if v})
+
+
+def test_an_answer_cut_off_while_thinking_is_asked_again_with_more_room_instead_of_failing():
+    class Thinker:
+        pool, name = "workers_ai", "cf_a"
+        def __init__(self):
+            self.max_tokens = []
+        def chat(self, model, messages, *, json_mode=False, max_tokens=1024, task=""):
+            self.max_tokens.append(max_tokens)
+            if max_tokens < 1500:                              # the 20b model spends everything on thinking at the small limit
+                return Response("", 10, max_tokens, model, self.name, "length")
+            return Response('{"ok": 1}', 10, 50, model, self.name, "stop")
+    t = Thinker()
+    llm = LLM(settings(), {"cf_a": t}, Budget(None, neuron_limit=10_000, rates=RATES))
+    assert llm.complete("extract", MSG, schema=lambda x: x, max_tokens=900) == {"ok": 1}
+    assert t.max_tokens[0] == 900 and t.max_tokens[-1] > 900 and len(t.max_tokens) >= 2
+
+
+def test_account_check_flags_an_empty_probe_answer():
+    class Empty(WorkersAIProvider):
+        def __init__(self):
+            super().__init__(ID(1), "tok-x" * 5, name="cf_e")
+        def list_models(self):
+            return ["small", "big"]
+        def chat(self, model, messages, **k):
+            return Response("", 3, 256, model, self.name, "length")
+    rep = run_account_check(settings(), {"cf_e": Empty()})
+    a = rep["accounts"]["e"]
+    assert not a["ok"] and a["models"]["small"]["reason"] == "empty_answer_thinking_used_all_tokens"

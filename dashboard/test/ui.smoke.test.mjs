@@ -39,7 +39,9 @@ cookie = login.headers.get("set-cookie").split(";")[0];
 await import("../public/app.js");
 const view = byId.view;
 const tick = (ms = 80) => new Promise((r) => setTimeout(r, ms));
-const go = async (hash) => { location.hash = hash; winListeners.hashchange(); await tick(); };
+const loading = () => view.text().includes("লোড হচ্ছে");
+// wait until the screen has really been drawn (not a fixed time: a busy machine needs longer), then give a late fetch a moment
+const go = async (hash) => { location.hash = hash; winListeners.hashchange(); await tick(); for (let i = 0; i < 100 && (loading() || !view.text().trim()); i++) await tick(30); await tick(20); };
 const click = async (pred, text) => { const b = view.find((e) => e.tag === "button" && pred(e) && e.text().includes(text))[0]; assert.ok(b, "button: " + text); for (const fn of b.listeners.click || []) await fn({ target: b }); await tick(); };
 
 test("every screen renders without an error card", async () => {

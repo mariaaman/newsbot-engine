@@ -49,7 +49,11 @@ def check_account(prov, chat_models: list[str], embed_model: str | None) -> dict
             continue
         try:
             r = prov.chat(m, PROBE, max_tokens=256, task="llmcheck")
-            out["models"][m] = {"status": "OK", "tokens": r.total_tokens}
+            if not r.text.strip():
+                out["models"][m] = {"status": "FAIL", "reason": "empty_answer_thinking_used_all_tokens"}
+                allok = False
+            else:
+                out["models"][m] = {"status": "OK", "tokens": r.total_tokens}
         except (LLMError, RateLimited) as e:
             out["models"][m] = {"status": "FAIL", "reason": why(e)}
             allok = False

@@ -146,6 +146,7 @@ class RetryCfg(_Base):
     max_retries: int = Field(3, ge=0)
     base_delay_s: float = Field(2, ge=0)
     max_delay_s: float = Field(60, ge=0)
+    fast_retries: int = Field(1, ge=0)         # quick retries on a 429 for an entry that has another entry (account) behind it
 
 
 class LLMCfg(_Base):
