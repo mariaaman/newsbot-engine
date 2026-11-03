@@ -109,8 +109,11 @@ def test_hourly_flow_order_and_guards():
         s = st[idx(needle)]
         assert s["if"] == "steps.plan.outputs.deploy == 'true'", needle      # nothing changed -> no Hugo, no deploy
         assert not s.get("continue-on-error")                                # a file-count failure blocks the deploy
-    for needle in ("brain_commit.sh brain \"$MODE\"", "deploy-needed"):
-        assert st[idx(needle)]["if"] == "env.MODE != 'dry-run'"
+    assert st[idx("deploy-needed")]["if"] == "env.MODE != 'dry-run'"
+    commit = st[idx("brain_commit.sh brain \"$MODE\"")]
+    # the commit also runs after a failed or timed-out engine step: state and diagnostics must not be lost with it
+    assert commit["if"] == "always() && env.MODE != 'dry-run' && steps.checkout_brain.outcome == 'success'"
+    assert next(s for s in st if s.get("id") == "run")["timeout-minutes"] < wf["jobs"]["run"]["timeout-minutes"]
     assert "env.MODE" in plan["if"] and wf["jobs"]["run"]["env"]["MODE"].endswith("'review' }}")   # default is review
     brain_co = next(s for s in st if s.get("with", {}).get("path") == "brain")
     assert "vars.BRAIN_REPO" in brain_co["with"]["repository"] and "secrets.BRAIN_REPO_TOKEN" in brain_co["with"]["token"]

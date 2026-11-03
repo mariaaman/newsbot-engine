@@ -34,7 +34,7 @@ def front_matter(path: Path) -> dict:
         return {}
 
 
-def gh_json(args: list[str], token: str | None) -> list | None:
+def gh_json(args: list[str], token: str | None) -> list | dict | None:
     if not token:
         return None
     try:
@@ -119,10 +119,21 @@ def check_brain(brain: Path, engine: Path) -> dict:
     return {"published": sum(published.values()), "left": left, "pending": pend}
 
 
+def failed_steps(run_id) -> str:
+    """Names of the steps that did not succeed in one run (step names and the run's conclusion only: safe in a public log)."""
+    data = gh_json(["run", "view", str(run_id), "--repo", os.environ.get("RUN_REPO", ""), "--json", "conclusion,jobs"],
+                   os.environ.get("RUN_TOKEN")) if run_id else None
+    if not isinstance(data, dict):
+        return ""
+    bad = [f"{s.get('name')}={s.get('conclusion')}" for j in data.get("jobs") or [] for s in j.get("steps") or []
+           if s.get("conclusion") not in ("success", "skipped", None)]
+    return f"{data.get('conclusion')}: " + (", ".join(bad) if bad else "no failed step recorded (cancelled or timed out?)")
+
+
 def check_actions() -> dict:
     out = {"recent_ok": None}
     runs = gh_json(["run", "list", "--repo", os.environ.get("RUN_REPO", ""), "--workflow", "hourly.yml", "--limit", "20",
-                    "--json", "conclusion,status"], os.environ.get("RUN_TOKEN"))
+                    "--json", "databaseId,conclusion,status"], os.environ.get("RUN_TOKEN"))
     if runs is None:
         add("WARN", "recent hourly runs", "not readable")
     else:
@@ -131,6 +142,12 @@ def check_actions() -> dict:
         out["recent_ok"] = (ok, len(done), bool(done) and done[0].get("conclusion") == "success")
         add("PASS" if done and done[0].get("conclusion") == "success" else "FAIL",
             "latest hourly run succeeded", f"{ok}/{len(done)} of the last runs ok")
+        streak = next((i for i, r in enumerate(done) if r.get("conclusion") == "success"), len(done))
+        if done and streak:
+            add("INFO", "hourly runs failed in a row", str(streak))
+            why = failed_steps(done[0].get("databaseId"))
+            if why:
+                add("INFO", "latest hourly run: conclusion and failed steps", why)
     prs = gh_json(["pr", "list", "--repo", os.environ.get("BRAIN_REPO", ""), "--state", "all", "--limit", "100",
                    "--json", "state,mergedAt,closedAt,title"], os.environ.get("GH_TOKEN"))
     if prs is None:

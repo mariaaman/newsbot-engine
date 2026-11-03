@@ -1,6 +1,7 @@
 """Go-live fixes: name gate, one repair attempt, decisions log size, readiness scorecard, helper workflows."""
 import copy
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -136,3 +137,27 @@ def test_no_html_tag_is_split_across_template_actions():
             if re.search(r"<[a-zA-Z][a-zA-Z0-9]*\s*\{\{", line) and not re.search(r"<[a-zA-Z][a-zA-Z0-9]*\s*\{\{[^}]*\}\}[^<>]*>", line):
                 bad.append((f.name, n))          # "<h2{{ end }}" style: the tag is left open at the end of a branch
     assert not bad, bad
+
+
+def test_readiness_names_the_failed_steps_of_the_latest_hourly_run():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("readiness_mod", ROOT / "scripts" / "readiness.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    runs = [{"databaseId": 3, "status": "completed", "conclusion": "failure"},
+            {"databaseId": 2, "status": "completed", "conclusion": "failure"},
+            {"databaseId": 1, "status": "completed", "conclusion": "success"}]
+    view = {"conclusion": "failure", "jobs": [{"steps": [{"name": "Run engine", "conclusion": "failure"},
+                                                          {"name": "Install Hugo", "conclusion": "skipped"},
+                                                          {"name": "Checkout engine", "conclusion": "success"}]}]}
+    mod.gh_json = lambda args, token: runs if args[:2] == ["run", "list"] else (view if args[:2] == ["run", "view"] else None)
+    os.environ["RUN_TOKEN"], os.environ["RUN_REPO"] = "t", "o/r"
+    try:
+        out = mod.check_actions()
+    finally:
+        os.environ.pop("RUN_TOKEN"); os.environ.pop("RUN_REPO")
+    rows = {n: (l, d) for l, n, d in mod.rows}
+    assert rows["latest hourly run succeeded"][0] == "FAIL"
+    assert rows["hourly runs failed in a row"][1] == "2"
+    assert rows["latest hourly run: conclusion and failed steps"][1] == "failure: Run engine=failure"
+    assert out["recent_ok"] == (1, 3, False)
