@@ -171,6 +171,22 @@ def _repair(llm, brain, cfg, fs, lang, art, qa, recent, embedder, est, prev, now
     return best_art, best_qa, tried
 
 
+def _autofix(llm, brain, cfg, fs, lang, art, qa, recent, embedder, prev):
+    """LLM-free edit of an unsupported figure / name / claim (see newsbot.autofix). Kept only if it removes a failure."""
+    if not getattr(cfg.qa, "autofix", True):
+        return art, qa
+    from newsbot.autofix import autofix_article
+    res = autofix_article(art, fs, lang, qa)
+    if res is None:
+        return art, qa
+    art2, fixed, dropped = res
+    qa2 = run_gates(art2, fs, lang, cfg, recent=recent, embedder=embedder, llm=llm, brain=brain, previous=prev)
+    log.info("autofix story=%s lang=%s corrected=%d removed=%d before=%s after=%s", fs.story_id, lang, fixed, dropped,
+             ",".join(qa.failures), ",".join(qa2.failures) or "-")
+    _gate_record(fs, lang, "autofix", art2, qa2)
+    return (art2, qa2) if len(qa2.failures) < len(qa.failures) else (art, qa)
+
+
 def produce_articles(fs: FactSheet, languages: list[str], cfg, brain, llm, *, embedder=None, recent_by_lang=None,
                      previous: dict | None = None, now=None) -> dict[str, ArticleResult]:
     """previous: lang -> currently published article (update flow); languages without an entry are written fresh."""
@@ -201,6 +217,8 @@ def produce_articles(fs: FactSheet, languages: list[str], cfg, brain, llm, *, em
             recent = load_recent_articles(brain, lang, cfg.qa.recent_articles_checked)
         qa = run_gates(art, fs, lang, cfg, recent=recent, embedder=embedder, llm=llm, brain=brain, previous=prev)
         _gate_record(fs, lang, "draft", art, qa)
+        if qa.failures and set(qa.failures) <= REPAIRABLE:
+            art, qa = _autofix(llm, brain, cfg, fs, lang, art, qa, recent, embedder, prev)
         if qa.failures and set(qa.failures) <= REPAIRABLE:
             art, qa, _ = _repair(llm, brain, cfg, fs, lang, art, qa, recent, embedder, est, prev, now)
         results[lang] = ArticleResult(lang, qa.disposition, art, qa)

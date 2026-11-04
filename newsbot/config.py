@@ -180,6 +180,7 @@ class QACfg(_Base):
     recent_articles_checked: int = Field(300, ge=1)
     max_repair_attempts: int = Field(2, ge=0, le=3)         # rewrites after a failed gate (names, years, ages, length, citations...); 0 = off
     banned_phrases: list[str] = []                         # added to the built-in list in qa.py
+    autofix: bool = True                                   # fix or delete an unsupported figure/name/claim in the draft itself (no LLM), before any rewrite
 
 
 class WriteCfg(_Base):

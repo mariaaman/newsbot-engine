@@ -256,7 +256,7 @@ def _produce(patch, llm_extra=None, lang="en"):
     mock.responses["write_en"] = _patched_writer(patch)
     mock.responses.update(llm_extra or {})
     llm = build_llm(load_llm_settings(TEMPLATE), None, dry_run=True, mock=mock)
-    return produce_articles(FS, [lang], CFG, None, llm, recent_by_lang={lang: []})[lang]
+    return produce_articles(FS, [lang], make_cfg(qa={"autofix": False}), None, llm, recent_by_lang={lang: []})[lang]
 
 
 def _patched_writer(patch):

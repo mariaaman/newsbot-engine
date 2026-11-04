@@ -139,7 +139,7 @@ def _produce_with(writer, **qa):
     mock = dry_run_provider()
     mock.responses["write_en"] = writer
     llm = build_llm(load_llm_settings(TEMPLATE), None, dry_run=True, mock=mock)
-    return produce_articles(STORIES["ev-metro"], ["en"], make_cfg(qa=qa), None, llm, recent_by_lang={"en": []})["en"]
+    return produce_articles(STORIES["ev-metro"], ["en"], make_cfg(qa={"autofix": False, **qa}), None, llm, recent_by_lang={"en": []})["en"]
 
 
 def test_second_repair_attempt_cures_a_wrong_name_and_a_wrong_year():

@@ -50,7 +50,7 @@ def _mock(first_extra, second_extra=""):
 
 def _run(mock):
     llm = build_llm(load_llm_settings(TEMPLATE), None, dry_run=True, mock=mock)
-    return produce_articles(STORIES["ev-metro"], ["en"], CFG, None, llm, recent_by_lang={"en": []})["en"]
+    return produce_articles(STORIES["ev-metro"], ["en"], make_cfg(qa={"autofix": False}), None, llm, recent_by_lang={"en": []})["en"]
 
 
 def test_repair_cures_an_invented_name_once():
@@ -64,7 +64,7 @@ def test_failed_repair_keeps_the_gate_closed_and_asks_at_most_max_repair_attempt
     mock, calls = _mock("Zorblax Quimby opened the line [S1].", "Zorblax Quimby opened the line [S1].")
     r = _run(mock)
     assert calls == [False, True, True] and "unsupported_name" in r.qa.failures and r.status == "pending"   # 1 write + 2 repairs
-    off = make_cfg(qa={"max_repair_attempts": 0})
+    off = make_cfg(qa={"max_repair_attempts": 0, "autofix": False})
     mock, calls = _mock("Zorblax Quimby opened the line [S1].")
     llm = build_llm(load_llm_settings(TEMPLATE), None, dry_run=True, mock=mock)
     r = produce_articles(STORIES["ev-metro"], ["en"], off, None, llm, recent_by_lang={"en": []})["en"]

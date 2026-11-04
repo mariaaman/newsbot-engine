@@ -157,7 +157,7 @@ def test_repair_request_carries_the_rejected_draft_and_asks_for_minimal_changes(
         return art
     mock.responses["write_en"] = write
     llm = build_llm(load_llm_settings(TEMPLATE), None, dry_run=True, mock=mock)
-    r = produce_articles(STORIES["ev-metro"], ["en"], make_cfg(), None, llm, recent_by_lang={"en": []})["en"]
+    r = produce_articles(STORIES["ev-metro"], ["en"], make_cfg(qa={"autofix": False}), None, llm, recent_by_lang={"en": []})["en"]
     assert r.qa.failures == [] and "Zorblax" not in r.article["body_markdown"]
     assert seen[0][-1] == "user" and "assistant" not in seen[0]                    # first write: no draft
     assert seen[1][-2:] == ["assistant", "user"]                                    # repair: draft, then the correction note
