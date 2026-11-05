@@ -8,7 +8,9 @@
 {{- with .Params.image }}
 <figure class="lead"><img src="{{ .url }}" alt="{{ .alt }}" width="{{ .width }}" height="{{ .height }}" fetchpriority="high" referrerpolicy="no-referrer">
 <figcaption>© {{ .credit }} · {{ with .license_url }}<a href="{{ . }}" rel="noopener nofollow" target="_blank">{{ $.Params.image.license }}</a>{{ else }}{{ .license }}{{ end }}{{ with .page }} · <a href="{{ . }}" rel="noopener nofollow" target="_blank">Wikimedia Commons</a>{{ end }}</figcaption></figure>
-{{- end }}
+{{- else }}{{ with .Params.categories }}{{ $c := index . 0 }}
+<div class="lead banner c-{{ $c }}" role="img" aria-label="{{ partial "catname.html" $c }}"><span class="b-cat">{{ partial "catname.html" $c }}</span><span class="b-site">{{ $d.name }}</span></div>
+{{- end }}{{ end }}
 <aside class="summary"><strong>{{ i18n "summary" }}</strong><p>{{ .Params.summary }}</p></aside>
 {{ partial "adslot.html" (dict "ctx" . "slot" "after_summary") }}
 <div class="body">

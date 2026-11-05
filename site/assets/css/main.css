@@ -40,3 +40,10 @@ h3{font-size:1.05rem;margin:1rem 0 .3rem}
 .lead{margin:1rem 0}.lead img{width:100%;height:auto;aspect-ratio:1200/630;object-fit:cover;border-radius:.5rem;display:block;background:var(--card)}
 .lead figcaption{font-size:.78rem;color:var(--muted,#667);margin-top:.3rem}.lead figcaption a{color:inherit}
 .card .thumb{display:block;margin:-.8rem -1rem .6rem}.card .thumb img{width:100%;height:auto;aspect-ratio:16/9;object-fit:cover;display:block;border-radius:.6rem .6rem 0 0}
+
+.banner{--h:215;position:relative;display:flex;flex-direction:column;justify-content:flex-end;gap:.15rem;aspect-ratio:1200/630;padding:1.2rem 1.4rem;border-radius:.5rem;color:#fff;text-decoration:none;overflow:hidden;background:linear-gradient(135deg,hsl(var(--h) 55% 26%),hsl(calc(var(--h) + 28) 58% 40%))}
+.banner::after{content:"";position:absolute;right:-12%;top:-30%;width:60%;aspect-ratio:1;border-radius:50%;background:hsl(var(--h) 70% 70%/.16)}
+.banner .b-cat{position:relative;z-index:1;font-size:clamp(1.6rem,6vw,2.6rem);font-weight:800;line-height:1.2}
+.banner .b-site{position:relative;z-index:1;font-size:.95rem;opacity:.85;letter-spacing:.02em}
+.card .thumb.banner{display:flex;aspect-ratio:16/7;margin:-.8rem -1rem .6rem;padding:.7rem 1rem;border-radius:.6rem .6rem 0 0}.card .thumb.banner .b-cat{font-size:1.25rem}
+.c-bangladesh{--h:150}.c-world{--h:210}.c-politics{--h:350}.c-economy{--h:38}.c-technology{--h:265}.c-sports{--h:18}.c-science{--h:185}.c-entertainment{--h:305}.c-environment{--h:125}.c-education{--h:235}
