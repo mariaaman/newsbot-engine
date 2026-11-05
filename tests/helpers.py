@@ -37,6 +37,7 @@ DEFAULTS = {
            "title_len": {"bn": (15, 110), "en": (20, 100)}, "min_confirmed_facts": 1, "max_quote_words": 15,
            "duplicate_title_similarity": 0.6, "duplicate_embedding_threshold": 0.9,
            "recent_articles_checked": 300, "max_repair_attempts": 2, "banned_phrases": [], "autofix": True},
+    "images": {"enabled": False},
     "write": {"own_source_chars": 1500, "max_tokens": 4000,
               "local_angle": {"bn": "Explain what this means for readers in Bangladesh.",
                               "en": "Give short background and an international view."}},

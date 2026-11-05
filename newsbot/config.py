@@ -192,6 +192,10 @@ class WriteCfg(_Base):
     }
 
 
+class ImagesCfg(_Base):
+    enabled: bool = True              # lead photo from Wikimedia Commons (link + credit only, licence checked); off = banner only
+
+
 class SensitiveCfg(_Base):
     # category -> keywords (English matched on word boundaries, Bengali as substrings). Empty = built-in lists.
     keywords: dict[str, list[str]] = {}
@@ -241,6 +245,7 @@ class Config(_Base):
     qa: QACfg = QACfg()
     write: WriteCfg = WriteCfg()
     sensitive: SensitiveCfg = SensitiveCfg()
+    images: ImagesCfg = ImagesCfg()
     ads: AdsCfg = AdsCfg()
     sources: list[SourceFeed] = []
 

@@ -5,6 +5,10 @@
 <p class="meta">{{ with .Params.categories }}{{ $c := index . 0 }}{{ with site.GetPage (printf "/categories/%s" $c) }}<a class="cat" href="{{ .RelPermalink }}">{{ partial "catname.html" $c }}</a>{{ else }}<span class="cat">{{ partial "catname.html" $c }}</span>{{ end }} · {{ end }}{{ i18n "published" }} <time datetime="{{ .Date.Format "2006-01-02T15:04:05Z07:00" }}">{{ partial "fmtdate.html" .Date }}</time>{{ if gt (sub .Lastmod.Unix .Date.Unix) 3600 }} <span class="badge">{{ i18n "updated" }}: <time datetime="{{ .Lastmod.Format "2006-01-02T15:04:05Z07:00" }}">{{ partial "fmtdate.html" .Lastmod }}</time></span>{{ end }}</p>
 <h1>{{ .Title }}</h1>
 </header>
+{{- with .Params.image }}
+<figure class="lead"><img src="{{ .url }}" alt="{{ .alt }}" width="{{ .width }}" height="{{ .height }}" fetchpriority="high" referrerpolicy="no-referrer">
+<figcaption>© {{ .credit }} · {{ with .license_url }}<a href="{{ . }}" rel="noopener nofollow" target="_blank">{{ $.Params.image.license }}</a>{{ else }}{{ .license }}{{ end }}{{ with .page }} · <a href="{{ . }}" rel="noopener nofollow" target="_blank">Wikimedia Commons</a>{{ end }}</figcaption></figure>
+{{- end }}
 <aside class="summary"><strong>{{ i18n "summary" }}</strong><p>{{ .Params.summary }}</p></aside>
 {{ partial "adslot.html" (dict "ctx" . "slot" "after_summary") }}
 <div class="body">

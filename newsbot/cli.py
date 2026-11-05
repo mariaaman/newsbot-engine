@@ -240,7 +240,11 @@ def write_story_articles(decisions, factsheets, cfg, brain: Path, mode: str, llm
             continue
         results = produce_articles(fs, d.route, cfg, brain, llm, embedder=embedder)
         if mode != "dry-run":
-            write_outputs(brain, fs, results, now)
+            image = None
+            if getattr(getattr(cfg, "images", None), "enabled", False):
+                from newsbot.images import story_image
+                image = story_image(results)
+            write_outputs(brain, fs, results, now, image=image)
         for r in results.values():
             d.reason += f"|{r.lang}:{r.status}"
         out[d.story_id] = results

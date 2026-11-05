@@ -25,7 +25,14 @@
 {{- with .Params.summary }}
 <meta property="og:description" content="{{ . }}">
 {{- end }}
+{{- with .Params.image }}
+<meta property="og:image" content="{{ .url }}">
+<meta property="og:image:width" content="{{ .width }}">
+<meta property="og:image:height" content="{{ .height }}">
+<meta name="twitter:card" content="summary_large_image">
+{{- else }}
 <meta name="twitter:card" content="summary">
+{{- end }}
 {{- with .OutputFormats.Get "RSS" }}
 <link rel="alternate" type="application/rss+xml" title="{{ $.Title }}" href="{{ .Permalink }}">
 {{- end }}

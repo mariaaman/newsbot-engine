@@ -37,3 +37,6 @@ h3{font-size:1.05rem;margin:1rem 0 .3rem}
 .site-footer{border-top:1px solid var(--line);margin-top:3rem;padding:1rem 0;color:var(--muted);font-size:.9rem}.site-footer nav a{margin-right:1rem}
 .policy h2{font-size:1.15rem}
 [dir=rtl] .langs a{margin-left:0;margin-right:.75rem}[dir=rtl] .site-footer nav a{margin-right:0;margin-left:1rem}[dir=rtl] .timeline ol{padding:0 1rem 0 0;border-left:0;border-right:2px solid var(--line)}
+.lead{margin:1rem 0}.lead img{width:100%;height:auto;aspect-ratio:1200/630;object-fit:cover;border-radius:.5rem;display:block;background:var(--card)}
+.lead figcaption{font-size:.78rem;color:var(--muted,#667);margin-top:.3rem}.lead figcaption a{color:inherit}
+.card .thumb{display:block;margin:-.8rem -1rem .6rem}.card .thumb img{width:100%;height:auto;aspect-ratio:16/9;object-fit:cover;display:block;border-radius:.6rem .6rem 0 0}

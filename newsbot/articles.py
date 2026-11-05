@@ -228,8 +228,23 @@ def produce_articles(fs: FactSheet, languages: list[str], cfg, brain, llm, *, em
     return results
 
 
+def _existing_image(brain: Path, lang: str, slug: str) -> dict | None:
+    """An update rewrites the whole file: keep the photo the live (or pending) article already has."""
+    for sub in ("content", "pending"):
+        f = brain / sub / lang / f"{slug}.md"
+        if f.is_file():
+            parts = f.read_text(encoding="utf-8").split("---", 2)
+            try:
+                img = (yaml.safe_load(parts[1]) or {}).get("image") if len(parts) >= 3 else None
+            except yaml.YAMLError:
+                img = None
+            if isinstance(img, dict) and img.get("url"):
+                return img
+    return None
+
+
 def write_outputs(brain: str | Path, fs: FactSheet, results: dict[str, ArticleResult], now=None,
-                  published_dates: dict | None = None) -> list[str]:
+                  published_dates: dict | None = None, image: dict | None = None) -> list[str]:
     """publish -> content/<lang>/<slug>.md, pending -> pending/<lang>/<slug>.md (with the reasons).
     Returns the written paths relative to brain."""
     now = now or utcnow()
@@ -238,7 +253,7 @@ def write_outputs(brain: str | Path, fs: FactSheet, results: dict[str, ArticleRe
         if r.article is None or r.qa is None:
             continue
         if r.status == "publish":
-            rel, extra = Path("content") / lang / f"{r.article['slug']}.md", None
+            rel, extra = Path("content") / lang / f"{r.article['slug']}.md", {}
         else:
             rel = Path("pending") / lang / f"{r.article['slug']}.md"
             extra = {"pending": {"failures": r.qa.failures, "review": r.qa.review,
@@ -246,6 +261,9 @@ def write_outputs(brain: str | Path, fs: FactSheet, results: dict[str, ArticleRe
             off = _offending(r.article, fs, r.qa)
             if off:
                 extra["pending"]["offending"] = off            # for the owner: delete these names / figures, then publish
+        img = image or _existing_image(Path(brain), lang, r.article["slug"])
+        if img:
+            extra["image"] = img
         _atomic_write(Path(brain) / rel, to_markdown_file(r.article, fs, lang, now, extra=extra,
                                                        published=(published_dates or {}).get(lang) or None))
         r.path = str(rel)
