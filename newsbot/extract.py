@@ -43,17 +43,45 @@ _NUM = re.compile(r"(\d+(?:[.,]\d+)*)(?:\s*(" + "|".join(sorted(map(re.escape, _
                   r"|\s*(" + "|".join(_CJK_MULT) + r"))?", re.I)
 
 
-def numbers_in(s: str) -> set[str]:
-    """Canonical figures: Bengali digits -> ASCII, commas dropped, lakh/crore/million applied
-    (so '৪ লাখ' == '400,000' == '0.4 million')."""
+_SPACED = re.compile(r"(?<![\d.,])(\d{1,3})((?: \d{3})+)(?![\d])")      # "405 000" (French, Spanish, Russian style; norm_text turned the NBSP into a space)
+
+
+def _plain_values(num: str):
+    """Every plausible value of one written figure (a list of Decimal; usually one).
+    Comma and dot are ambiguous between languages: "1,234" and "1.234.567" group thousands, "3,1" and "6.9" are decimals,
+    "1,234.56" and "1.234,56" say themselves which separator is the decimal one. "785.000" can be 785 (English decimal) or
+    785000 (Spanish thousands): both are returned, so a fact sheet written either way matches an article written either way."""
     from decimal import Decimal, InvalidOperation
+    seps = [c for c in num if c in ".,"]
+    try:
+        if not seps:
+            return [Decimal(num)]
+        if "." in seps and "," in seps:
+            dec = num[max(num.rfind("."), num.rfind(",")):][0]
+            thou = "," if dec == "." else "."
+            return [Decimal(num.replace(thou, "").replace(dec, "."))]
+        sep, parts = seps[0], num.split(seps[0])
+        if len(seps) > 1:                                          # 1,234,567 / 1.234.567 -> thousands
+            if all(len(x) == 3 for x in parts[1:]):
+                return [Decimal("".join(parts))]
+            return [Decimal(num.replace(",", ""))]                 # irregular grouping: the old reading
+        if len(parts[1]) == 3:                                     # 1,234 / 785.000
+            thousands = Decimal("".join(parts))
+            return [thousands] if sep == "," else [thousands, Decimal(num)]
+        return [Decimal(num.replace(",", "."))]                    # 3,1 / 6.9 -> decimal
+    except InvalidOperation:
+        return []
+
+
+def numbers_in(s: str) -> set[str]:
+    """Canonical figures: Bengali digits -> ASCII, thousands separators (comma, dot, space) dropped, decimal comma understood,
+    lakh/crore/million applied (so '৪ লাখ' == '400,000' == '0.4 million', and '405 000' == '405,000' == '405.000')."""
     out = set()
-    for num, mult, cjk in _NUM.findall(re.sub(r"(?<=\d):00(?!\d)", "", norm_text(s))):
-        try:
-            v = Decimal(num.replace(",", "")) * (_MULT_N[mult.lower()] if mult else _CJK_MULT[cjk] if cjk else 1)
-        except InvalidOperation:
-            continue
-        out.add(str(int(v)) if v == v.to_integral() else str(v.normalize()))
+    text = _SPACED.sub(lambda m: m.group(1) + m.group(2).replace(" ", ""), re.sub(r"(?<=\d):00(?!\d)", "", norm_text(s)))
+    for num, mult, cjk in _NUM.findall(text):
+        for base in _plain_values(num):
+            v = base * (_MULT_N[mult.lower()] if mult else _CJK_MULT[cjk] if cjk else 1)
+            out.add(str(int(v)) if v == v.to_integral() else str(v.normalize()))
     return out
 
 

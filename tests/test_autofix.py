@@ -69,3 +69,26 @@ def test_a_draft_that_would_lose_most_of_its_body_goes_to_a_human_instead():
     art["body_markdown"] = "## What happened\n\nZorblax Quimby opened it [S1].\n\nZorblax Quimby closed it [S1].\n\nZorblax Quimby left [S1]."
     qa = run_gates(art, FS, "en", make_cfg(), recent=[], run_llm_check=False)
     assert autofix_article(art, FS, "en", qa) is None
+
+
+def test_a_language_without_a_name_check_loses_nothing_over_names():
+    art = copy.deepcopy(base())
+    art["body_markdown"] = art["body_markdown"].replace("\n\n## ", "\n\nZorblax Quimby opened it. [S1]\n\n## ", 1)
+    qa = run_gates(art, FS, "en", make_cfg(), recent=[], run_llm_check=False)
+    qa.failures[:] = ["unsupported_number"]                     # pretend only a figure was rejected (the name gate is off for this language)
+    assert autofix_article(art, FS, "en", qa) is None            # nothing to fix: the name sentence stays
+
+
+def test_numbers_written_with_spaces_or_decimal_commas_match_the_fact_sheet():
+    from newsbot.extract import numbers_in
+    assert numbers_in("405 000 votes") == numbers_in("405,000") == {"405000"}
+    assert numbers_in("785.000") >= {"785000"} and numbers_in("785 000") <= numbers_in("785.000")   # Spanish fact sheet, spaced article
+    assert numbers_in("6,9 %") == numbers_in("6.9 percent") == {"6.9"}
+    assert numbers_in("1.234,56") == numbers_in("1,234.56") == {"1234.56"}
+    assert numbers_in("12 May 2026") == {"12", "2026"}
+
+
+def test_us_is_not_an_invented_name_when_the_fact_sheet_says_united_states():
+    from newsbot.qa import unsupported_names
+    assert unsupported_names("Voters in the US went to the polls.", {"voters", "in", "the", "went", "to", "polls", "united", "states"}) == []
+    assert unsupported_names("Voters in the US went to the polls.", {"voters", "in", "the", "went", "to", "polls"}) == ["US"]

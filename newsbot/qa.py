@@ -156,6 +156,8 @@ def unsupported_names(text: str, vocab: set[str]) -> list[str]:
                         continue
                     if lw in ROLE_WORDS or lw in lowered or lw.rstrip("s") in lowered:
                         continue
+                    if lw == "us" and vocab & {"u.s", "states", "america", "american", "americans"}:
+                        continue                                      # "US" for a fact sheet that says U.S. / United States
                     bad.append(w)
     return sorted(set(bad))
 

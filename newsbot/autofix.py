@@ -119,15 +119,19 @@ def _fix_paragraph(par: str, ctx: _Ctx) -> str:
     return " ".join(keep)
 
 
-def autofix_article(art: dict, fs, lang: str, qa, names_checked: bool = True) -> tuple[dict, int, int] | None:
+def autofix_article(art: dict, fs, lang: str, qa) -> tuple[dict, int, int] | None:
     """(edited copy, sentences corrected, sentences removed) or None when nothing can or should be done."""
     if not set(qa.failures) & FIXABLE:
         return None
     nums, _vocab, conf = fact_vocab(fs)
     names, numbers = offending_terms(art, fs)
+    # act only on what the gates actually rejected: a language without a name check (es, fr...) must not lose sentences over "names"
+    names = names if "unsupported_name" in qa.failures else []
+    numbers = numbers if "unsupported_number" in qa.failures else []
     claims = [str(c.get("claim", c) if isinstance(c, dict) else c) for c in
               qa.details.get("unsupported_claims", {}).get("unsupported", [])]
-    ctx = _Ctx(fs, names if names_checked else [], set(numbers), set(), claims)
+    claims = claims if "unsupported_claims" in qa.failures else []
+    ctx = _Ctx(fs, names, set(numbers), set(), claims)
     out = copy.deepcopy(art)
 
     body_before = len(" ".join(art["body_markdown"].split()).split())
@@ -154,8 +158,9 @@ def autofix_article(art: dict, fs, lang: str, qa, names_checked: bool = True) ->
     ctx.conf_nums = set()
     # the "confirmed" list is held to the stricter figure set: only figures of confirmed facts
     bad_conf = set()
-    for it in art["confirmed"]:
-        bad_conf |= numbers_in(_numbers_text(it)) - conf
+    if "confirmed_unsupported_number" in qa.failures:
+        for it in art["confirmed"]:
+            bad_conf |= numbers_in(_numbers_text(it)) - conf
     ctx.conf_nums = bad_conf
     out["confirmed"] = fix_items(art["confirmed"], conf_list=True)
     ctx.conf_nums = cn
