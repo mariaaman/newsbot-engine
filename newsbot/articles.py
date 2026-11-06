@@ -15,6 +15,7 @@ from newsbot import langs as L
 from newsbot.diag import DIAG, detail_counts
 from newsbot.qa import QAResult, offending_terms, run_gates
 from newsbot.state import _atomic_write
+from newsbot.translate import estimate_translate_tokens, translate_article
 from newsbot.write import estimate_write_tokens, to_markdown_file, write_article
 
 log = logging.getLogger("newsbot.articles")
@@ -191,14 +192,32 @@ def produce_articles(fs: FactSheet, languages: list[str], cfg, brain, llm, *, em
                      previous: dict | None = None, now=None) -> dict[str, ArticleResult]:
     """previous: lang -> currently published article (update flow); languages without an entry are written fresh."""
     results: dict[str, ArticleResult] = {}
-    for lang in languages:
-        est = estimate_write_tokens(fs, lang, cfg, brain, previous.get(lang) if previous else None)
+    lead = getattr(cfg.write, "translate_from", "") or ""
+    use_translation = bool(lead and lead in languages and len(languages) > 1 and not previous)
+    order = ([lead] + [l for l in languages if l != lead]) if use_translation else list(languages)
+    for lang in order:
+        tr = use_translation and lang != lead
+        lead_art = None
+        if tr:
+            lr = results.get(lead)
+            if lr is None or lr.article is None or lr.qa is None or lr.qa.failures:       # a lead that failed a gate is not translated
+                results[lang] = ArticleResult(lang, "skipped_lead")
+                DIAG.add("article", story=fs.story_id, lang=lang, status="skipped_lead")
+                continue
+            lead_art = lr.article
+            est = estimate_translate_tokens(lead_art, lang, cfg, brain)
+        else:
+            est = estimate_write_tokens(fs, lang, cfg, brain, previous.get(lang) if previous else None)
+        task = f"translate_{lang}" if tr else f"write_{lang}"
         try:
-            if not llm.can_run(f"write_{lang}", est):
+            if not llm.can_run(task, est):
                 results[lang] = ArticleResult(lang, "queued_budget")
                 DIAG.add("article", story=fs.story_id, lang=lang, status="queued_budget")
                 continue
-            art, removed = write_article(llm, brain, cfg, fs, lang, previous.get(lang) if previous else None)
+            if tr:
+                art, removed = translate_article(llm, brain, cfg, fs, lang, lead_art)
+            else:
+                art, removed = write_article(llm, brain, cfg, fs, lang, previous.get(lang) if previous else None)
         except BudgetExhausted:
             results[lang] = ArticleResult(lang, "queued_budget")
             DIAG.add("article", story=fs.story_id, lang=lang, status="queued_budget")
@@ -215,11 +234,11 @@ def produce_articles(fs: FactSheet, languages: list[str], cfg, brain, llm, *, em
         recent = (recent_by_lang or {}).get(lang)
         if recent is None:
             recent = load_recent_articles(brain, lang, cfg.qa.recent_articles_checked)
-        qa = run_gates(art, fs, lang, cfg, recent=recent, embedder=embedder, llm=llm, brain=brain, previous=prev)
+        qa = run_gates(art, fs, lang, cfg, recent=recent, embedder=embedder, llm=llm, brain=brain, previous=prev, lead=lead_art)
         _gate_record(fs, lang, "draft", art, qa)
         if qa.failures and set(qa.failures) <= REPAIRABLE:
             art, qa = _autofix(llm, brain, cfg, fs, lang, art, qa, recent, embedder, prev)
-        if qa.failures and set(qa.failures) <= REPAIRABLE:
+        if qa.failures and set(qa.failures) <= REPAIRABLE and not tr:          # a translation is never rewritten: it is checked against its lead
             art, qa, _ = _repair(llm, brain, cfg, fs, lang, art, qa, recent, embedder, est, prev, now)
         results[lang] = ArticleResult(lang, qa.disposition, art, qa)
         DIAG.add("article", story=fs.story_id, lang=lang, status=qa.disposition, failures=list(qa.failures))

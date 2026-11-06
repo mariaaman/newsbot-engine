@@ -36,16 +36,24 @@ test("settings lists the enabled languages, the default and the catalog", async 
   assert.deepEqual(d.fields.find((f) => f.path.join(".") === "site.default").options, CODES);
 });
 
-test("add: any catalog language is appended to site.languages, everything else in the file stays", async () => {
+test("add: only the 5 site languages can be added, appended to site.languages, everything else in the file stays", async () => {
   const { c, w } = await session();
   const before = w.files[NEWS];
-  for (const code of ["hi", "ar", "ja", "de"]) assert.equal((await lang(c, "add", code)).status, 200, code);
-  assert.deepEqual(langs(w), ["bn", "en", "hi", "ar", "ja", "de"]);
-  const restore = w.files[NEWS].replace("languages: [bn, en, hi, ar, ja, de]", "languages: [bn, en]");
+  for (const code of ["es", "fr", "hi"]) assert.equal((await lang(c, "add", code)).status, 200, code);
+  assert.deepEqual(langs(w), ["bn", "en", "es", "fr", "hi"]);
+  const restore = w.files[NEWS].replace("languages: [bn, en, es, fr, hi]", "languages: [bn, en]");
   assert.equal(restore, before);                                                  // nothing but that one line changed
   assert.ok(w.dispatches.some((x) => x.workflow === "validate-config"));         // the engine's validation runs on the new config
   const d = await (await c("/api/settings")).json();
-  assert.deepEqual(d.languages.enabled, ["bn", "en", "hi", "ar", "ja", "de"]);
+  assert.deepEqual(d.languages.enabled, ["bn", "en", "es", "fr", "hi"]);
+  assert.deepEqual(d.languages.selectable, ["bn", "en", "es", "fr", "hi"]); assert.equal(d.languages.max, 5);
+});
+
+test("add: a language outside the 5 (ar, ja, de ...) is refused, and so is a sixth language", async () => {
+  const { c, w } = await session();
+  const before = w.files[NEWS];
+  for (const code of ["ar", "ja", "de", "ur", "pt"]) assert.equal((await lang(c, "add", code)).status, 400, code);
+  assert.equal(w.files[NEWS], before);
 });
 
 test("add: unknown, repeated or malformed languages are refused and nothing is written", async () => {

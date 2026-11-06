@@ -371,7 +371,7 @@ async function settings() {
     return h("div", { class: "list-line" }, h("div", { class: "row" }, h("strong", { class: "grow" }, `${m.native} · ${m.name} (${code})`),
       code === LG.default ? h("span", { class: "chip ok" }, "ডিফল্ট") : (LG.enabled.length > 1 ? rm : null)));
   });
-  const free = LG.catalog.filter((x) => !LG.enabled.includes(x.code));
+  const free = LG.enabled.length >= (LG.max || 5) ? [] : LG.catalog.filter((x) => (LG.selectable || []).includes(x.code) && !LG.enabled.includes(x.code));
   const langPick = h("select", {}, free.map((m) => h("option", { value: m.code }, `${m.native} · ${m.name}${m.ui ? "" : " (সাইটের লেবেল ইংরেজিতে)"}`)));
   const addLang = h("button", { class: "btn small primary", onclick: () => guard(addLang, async () => {
     const m = info(langPick.value);
@@ -381,7 +381,7 @@ async function settings() {
   const langCard = h("div", { class: "card" }, h("h2", {}, "সাইটের ভাষা"),
     h("p", { class: "muted small" }, "যে ভাষাগুলোতে নতুন খবর লেখা ও প্রকাশ হবে। যোগ করতে আর কিছু বসাতে হয় না: দৈর্ঘ্যের সীমা, লেখার নির্দেশ, মেনু-লেবেল ও এআই-ঘোষণা তালিকা থেকে নিজে বসে। সূত্র (feed) যেকোনো ভাষার হতে পারে।"),
     langChips,
-    free.length ? h("div", { class: "row" }, h("div", { class: "grow" }, langPick), addLang) : h("p", { class: "muted small" }, "তালিকার সব ভাষা যোগ করা হয়ে গেছে।"),
+    free.length ? h("div", { class: "row" }, h("div", { class: "grow" }, langPick), addLang) : h("p", { class: "muted small" }, `সর্বোচ্চ ${LG.max || 5}টি ভাষা: বাংলা, English, Español, Français, हिन्दी। আরও ভাষা যোগ করা যায় না।`),
     h("p", { class: "muted small" }, "জাপানি, চীনা ও থাই লেখায় ফাঁক থাকে না, তাই ন্যূনতম দৈর্ঘ্য অক্ষর গুনে মাপা হয়। বড়-হাতের নাম-যাচাই শুধু ইংরেজিতে চলে, কারণ অন্য ভাষায় জায়গা ও সংস্থার নাম অনূদিত হয় (Estados Unidos); সংখ্যা-যাচাই সব ভাষায় চালু। প্রতিটি অনুবাদ পাঠকদের কাছে যাওয়ার আগে ওই ভাষা জানা কাউকে দিয়ে দেখিয়ে নিন।"));
   return [h("h1", {}, "সেটিংস"), h("p", { class: "muted small" }, "বদলালে নিচে সংরক্ষণ-বার আসবে। মডেল, বাজেট, ভাষা ও কাঁচা ফাইলের বদল সঙ্গে সঙ্গে সংরক্ষিত হয়।"), langCard, groups, llmSection, rawSection, bar];
 }

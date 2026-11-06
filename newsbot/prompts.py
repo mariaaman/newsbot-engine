@@ -31,7 +31,7 @@ def _attr(v: str) -> str:
 def wrap_untrusted(tag: str, text: str, **attrs: str) -> str:
     """<tag a="b">text</tag> where any tag-like markup inside text is defanged, so a source cannot
     close the block and smuggle instructions outside it."""
-    safe = re.sub(r"<\s*(/?)\s*(source_data|claims_data|fact_sheet|draft_data)", r"&lt;\1\2", text, flags=re.I)
+    safe = re.sub(r"<\s*(/?)\s*(source_data|claims_data|fact_sheet|draft_data|article_data)", r"&lt;\1\2", text, flags=re.I)
     a = "".join(f' {k}="{_attr(v)}"' for k, v in attrs.items())
     return f"<{tag}{a}>\n{safe}\n</{tag}>"
 

@@ -73,11 +73,14 @@ def _plain_values(num: str):
         return []
 
 
+_AR_SEP = {0x66B: ".", 0x66C: ","}                     # Arabic decimal and thousands separators
+
+
 def numbers_in(s: str) -> set[str]:
     """Canonical figures: Bengali digits -> ASCII, thousands separators (comma, dot, space) dropped, decimal comma understood,
     lakh/crore/million applied (so '৪ লাখ' == '400,000' == '0.4 million', and '405 000' == '405,000' == '405.000')."""
     out = set()
-    text = _SPACED.sub(lambda m: m.group(1) + m.group(2).replace(" ", ""), re.sub(r"(?<=\d):00(?!\d)", "", norm_text(s)))
+    text = _SPACED.sub(lambda m: m.group(1) + m.group(2).replace(" ", ""), re.sub(r"(?<=\d):00(?!\d)", "", norm_text(s).translate(_AR_SEP)))
     for num, mult, cjk in _NUM.findall(text):
         for base in _plain_values(num):
             v = base * (_MULT_N[mult.lower()] if mult else _CJK_MULT[cjk] if cjk else 1)

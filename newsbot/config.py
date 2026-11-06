@@ -186,6 +186,7 @@ class QACfg(_Base):
 class WriteCfg(_Base):
     own_source_chars: int = Field(1500, ge=0)              # chars of each same-language source shown to the writer
     max_tokens: int = Field(4000, ge=500)
+    translate_from: str = ""                               # lead language ("en"): every other language TRANSLATES that article instead of being written again from the fact sheet; "" = write each (old way)
     local_angle: dict[Lang, str] = {
         "bn": "Explain what this means for readers in Bangladesh.",
         "en": "Give short background and an international view.",

@@ -209,7 +209,8 @@ def offending_terms(a: dict, fs: FactSheet) -> tuple[list[str], list[str]]:
 
 
 def run_gates(a: dict, fs: FactSheet, lang: str, cfg, *, recent: list | None = None, embedder=None,
-              llm=None, brain=None, run_llm_check: bool = True, previous: dict | None = None) -> QAResult:
+              llm=None, brain=None, run_llm_check: bool = True, previous: dict | None = None,
+              lead: dict | None = None) -> QAResult:
     """previous = the currently published article when this is an update (M7 rules: corrections must be real,
     figures may not vanish silently, retained quotes were already vetted, an unchanged article is not an update)."""
     r = QAResult()
@@ -257,6 +258,11 @@ def run_gates(a: dict, fs: FactSheet, lang: str, cfg, *, recent: list | None = N
         missing = [p for p in paragraphs(secs[0]) if not _MARKER.search(p)]
         if missing:
             fail("missing_marker", paragraphs=len(missing))
+
+    if lead is not None:                                 # a translation: nothing may change except the words
+        from newsbot.translate import fidelity
+        for code in fidelity(lead, a):
+            fail(code)
 
     # facts: numbers, names, statuses
     text = article_text(a)

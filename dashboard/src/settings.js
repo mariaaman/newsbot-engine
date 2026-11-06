@@ -5,6 +5,10 @@ import { get, set, remove, listInsert, listRemove, flatten, reader } from "./yam
 import { getFile, putFile, dispatch, history } from "./github.js";
 import { HttpError, must, isObj } from "./util.js";
 
+/** The site publishes in at most these 5 languages (each is set up with its own writer prompt). The dashboard offers only these. */
+export const SELECTABLE = ["bn", "en", "es", "fr", "hi"];
+export const MAX_LANGUAGES = SELECTABLE.length;
+
 export const CONFIG_FILES = ["config/newsbot.yaml", "config/llm.yaml"];
 const RAW_OK = /^(config\/[A-Za-z0-9_.-]+\.yaml|prompts\/[A-Za-z0-9_.-]+\.md)$/;
 export const checkRawPath = (p) => must(typeof p === "string" && RAW_OK.test(p) && !p.includes(".."), 400, "that file cannot be edited here");
@@ -22,7 +26,7 @@ export async function describe(env) {
   }
   const read = Object.fromEntries(Object.entries(texts).map(([k, t]) => [k, reader(t)]));
   const nrd = read["config/newsbot.yaml"];
-  out.languages = { enabled: (nrd && nrd(["site", "languages"])) || [], default: (nrd && nrd(["site", "default"])) || null, catalog: CATALOG };
+  out.languages = { enabled: (nrd && nrd(["site", "languages"])) || [], default: (nrd && nrd(["site", "default"])) || null, catalog: CATALOG, selectable: SELECTABLE, max: MAX_LANGUAGES };
   for (const f of FIELDS) {
     const v = read[f.file] ? read[f.file](f.path) : undefined;
     out.fields.push({ ...optionsFor(f), value: v === undefined ? null : v, present: v !== undefined });
@@ -61,11 +65,13 @@ export function applyChange(file, text, ch) {
     if (ch.kind === "languages") {                    // add or remove one OUTPUT language of the site (the catalog lives in langs.js)
       must(file === "config/newsbot.yaml", 400, "languages are set in newsbot.yaml");
       must(typeof ch.code === "string" && CODES.includes(ch.code), 400, "unknown language");
+      must(ch.op !== "add" || SELECTABLE.includes(ch.code), 400, `only these languages can be added: ${SELECTABLE.join(", ")}`);
       const cur = get(text, ["site", "languages"]);
       must(Array.isArray(cur) && cur.length, 400, "site.languages was not found in newsbot.yaml");
       const def = get(text, ["site", "default"]);
       if (ch.op === "add") {
         must(!cur.includes(ch.code), 400, "this language is already on the site");
+        must(cur.length < MAX_LANGUAGES, 400, `the site has at most ${MAX_LANGUAGES} languages`);
         return { text: set(text, ["site", "languages"], [...cur, ch.code]), summary: `languages: add ${ch.code}` };
       }
       must(ch.op === "remove", 400, "bad language edit");

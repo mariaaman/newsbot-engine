@@ -204,6 +204,10 @@ class LLM:
         added in the dashboard) uses the tier of `write_default`, else the one of `write_en`."""
         if task in self.tasks:
             return self.tasks[task]
+        if task.startswith("translate_"):                      # a translation of any language: its own tier, else the writer's
+            for fallback in ("translate", "write_default", "write_en"):
+                if fallback in self.tasks:
+                    return self.tasks[fallback]
         if task.startswith("write_"):
             for fallback in ("write_default", "write_en"):
                 if fallback in self.tasks:

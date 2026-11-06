@@ -105,6 +105,13 @@ def _write(lang: str):
     return respond
 
 
+def _translate(messages) -> dict:
+    """Stand-in translator: hands the article back unchanged (a faithful 'translation' for the offline tests)."""
+    m = re.search(r"<article_data>\n(.*?)\n</article_data>", messages[-1]["content"], re.S)
+    return json.loads(m.group(1)) if m else {}
+
+
 def dry_run_provider() -> MockProvider:
     answers = {f"write_{lang}": _write(lang) for lang in L.LANGUAGES}      # every site language the catalog knows
+    answers.update({f"translate_{lang}": _translate for lang in L.LANGUAGES})
     return MockProvider({"extract": _extract, "verify": _verify, **answers, "qa_check": {"unsupported": []}, "*": {}})
