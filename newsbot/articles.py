@@ -4,6 +4,7 @@ Committing / PRs / deploy are M6; story-state updates for new articles are M6/M7
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -188,6 +189,33 @@ def _autofix(llm, brain, cfg, fs, lang, art, qa, recent, embedder, prev):
     return (art2, qa2) if len(qa2.failures) < len(qa.failures) else (art, qa)
 
 
+def _learn_from(fs, lang, art, qa, verdicts, autofixed: bool) -> None:
+    """Statistics for every draft, and one private review line for a draft that STILL fails after every automatic fix."""
+    from newsbot import learned
+    from newsbot.qa import article_text, offending_terms, strip_markers
+    for code in qa.failures:
+        learned.bump("gate_fail:" + code)
+    learned.bump("draft_clean" if not qa.failures else "draft_failed")
+    if autofixed:
+        learned.bump("autofix_kept")
+    if not qa.failures:
+        return
+    names, numbers = offending_terms(art, fs)
+    text = art["title"] + "\n" + article_text(art)
+    ctx = []
+    for t in (names + numbers)[:4]:
+        for s in re.split(r"(?<=[.!?\u0964])\s+", strip_markers(text)):
+            if t in s:
+                ctx.append(s[:200])
+                break
+    claims = qa.details.get("unsupported_claims", {}).get("unsupported", [])
+    claims = claims if isinstance(claims, (list, tuple)) else list(claims.values()) if isinstance(claims, dict) else []
+    learned.log_case({"story": fs.story_id, "lang": lang, "failures": list(qa.failures), "review": list(qa.review), "names": names[:8],
+                      "numbers": numbers[:8], "context": ctx, "verdicts": verdicts, "autofix_changed_it": autofixed,
+                      "claims": [str(c)[:160] for c in list(claims)[:3]],
+                      "fact_numbers": sorted({n for f in fs.facts for n in __import__("newsbot.extract", fromlist=["numbers_in"]).numbers_in(f.statement)})[:25]})
+
+
 def produce_articles(fs: FactSheet, languages: list[str], cfg, brain, llm, *, embedder=None, recent_by_lang=None,
                      previous: dict | None = None, now=None) -> dict[str, ArticleResult]:
     """previous: lang -> currently published article (update flow); languages without an entry are written fresh."""
@@ -236,10 +264,19 @@ def produce_articles(fs: FactSheet, languages: list[str], cfg, brain, llm, *, em
             recent = load_recent_articles(brain, lang, cfg.qa.recent_articles_checked)
         qa = run_gates(art, fs, lang, cfg, recent=recent, embedder=embedder, llm=llm, brain=brain, previous=prev, lead=lead_art)
         _gate_record(fs, lang, "draft", art, qa)
+        verdicts: dict = {}
+        if "unsupported_name" in qa.failures and getattr(cfg.qa, "diagnose", True):
+            from newsbot.diagnose import diagnose_names
+            saved, verdicts = diagnose_names(llm, brain, cfg, fs, lang, art, qa)
+            if saved:                                                    # a safe rule was learned: judge the same draft again
+                qa = run_gates(art, fs, lang, cfg, recent=recent, embedder=embedder, llm=llm, brain=brain, previous=prev, lead=lead_art)
+                _gate_record(fs, lang, "learned", art, qa)
+        before_fix = art
         if qa.failures and set(qa.failures) <= REPAIRABLE:
             art, qa = _autofix(llm, brain, cfg, fs, lang, art, qa, recent, embedder, prev)
         if qa.failures and set(qa.failures) <= REPAIRABLE and not tr:          # a translation is never rewritten: it is checked against its lead
             art, qa, _ = _repair(llm, brain, cfg, fs, lang, art, qa, recent, embedder, est, prev, now)
+        _learn_from(fs, lang, art, qa, verdicts, autofixed=art is not before_fix)
         results[lang] = ArticleResult(lang, qa.disposition, art, qa)
         DIAG.add("article", story=fs.story_id, lang=lang, status=qa.disposition, failures=list(qa.failures))
         log.info("article story=%s lang=%s status=%s failures=%s review=%s sanitized=%d", fs.story_id, lang,

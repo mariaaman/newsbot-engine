@@ -46,6 +46,8 @@ def build_parser() -> argparse.ArgumentParser:
     dn.add_argument("--brain", default=os.environ.get("NEWSBOT_BRAIN_DIR", "brain"))
     md = sub.add_parser("mark-deployed", help="record the content fingerprint after a successful deploy")
     md.add_argument("--brain", default=os.environ.get("NEWSBOT_BRAIN_DIR", "brain"))
+    lr = sub.add_parser("learning-report", help="print what the engine learned and which failures it could not fix (state/learning/)")
+    lr.add_argument("--brain", default="brain")
     nt = sub.add_parser("notify", help="send the run report and review requests to Telegram (never fails the run)")
     nt.add_argument("--brain", default=os.environ.get("NEWSBOT_BRAIN_DIR", "brain"))
     nt.add_argument("--report", default=os.environ.get("NEWSBOT_REPORT"))
@@ -80,6 +82,8 @@ def run_pipeline(cfg: "Config", mode: str, brain: Path, now=None, embedder=None,
     now = now or (DRY_RUN_NOW if dry else utcnow())     # dry-run lives on the fixtures' clock, or every sample story looks old
     effective = mode          # the CLI/workflow mode wins; publish.mode in config is only the default for the workflow
     from newsbot.diag import DIAG
+    from newsbot import learned
+    learned.configure(brain, write=not dry)             # learned rules are read always, written (state/learning/) only in a real run
     if not dry:
         DIAG.start(effective, utcnow().isoformat() if now is None else now.isoformat())
     log.info("run start mode=%s sources=%d", effective, len(cfg.sources))
@@ -328,6 +332,10 @@ def _main(argv: list[str] | None = None) -> int:
     setup_logging(getattr(args, "log_level", "INFO"))
     log = logging.getLogger("newsbot.cli")
     brain = Path(args.brain)
+    if args.cmd == "learning-report":
+        from newsbot import learned
+        print(learned.report(args.brain))
+        return 0
     if args.cmd == "notify":                                  # stdlib only: works even if the engine's dependencies are missing
         from newsbot.notify import notify_cmd
         return notify_cmd(brain, args.report, args.pr_url_file, args.workflow)

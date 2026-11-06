@@ -20,6 +20,7 @@ from newsbot.extract import norm_text, numbers_in
 from newsbot.llm import BudgetExhausted, LLMError
 from newsbot.models import FactSheet, parse_ts
 from newsbot.prompts import load_prompt, wrap_untrusted
+from newsbot import learned
 from newsbot.sensitive import detect
 from newsbot.write import SLUG_RE, fact_sheet_payload, validate_article
 
@@ -156,6 +157,8 @@ def unsupported_names(text: str, vocab: set[str]) -> list[str]:
                         continue
                     if lw in ROLE_WORDS or lw in lowered or lw.rstrip("s") in lowered:
                         continue
+                    if learned.name_ok(w, vocab):
+                        continue                                      # a rule learned from an earlier failure (newsbot/learned.py)
                     if lw == "us" and vocab & {"u.s", "states", "america", "american", "americans"}:
                         continue                                      # "US" for a fact sheet that says U.S. / United States
                     bad.append(w)

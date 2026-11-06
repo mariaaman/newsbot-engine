@@ -114,4 +114,4 @@ def _translate(messages) -> dict:
 def dry_run_provider() -> MockProvider:
     answers = {f"write_{lang}": _write(lang) for lang in L.LANGUAGES}      # every site language the catalog knows
     answers.update({f"translate_{lang}": _translate for lang in L.LANGUAGES})
-    return MockProvider({"extract": _extract, "verify": _verify, **answers, "qa_check": {"unsupported": []}, "*": {}})
+    return MockProvider({"extract": _extract, "verify": _verify, **answers, "qa_check": {"unsupported": []}, "diagnose": {"terms": []}, "*": {}})
