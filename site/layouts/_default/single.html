@@ -14,7 +14,7 @@
 <aside class="summary"><strong>{{ i18n "summary" }}</strong><p>{{ .Params.summary }}</p></aside>
 {{ partial "adslot.html" (dict "ctx" . "slot" "after_summary") }}
 <div class="body">
-{{- $c := .Content | replaceRE `\[(S\d+)\]` `<sup class="cite"><a href="#source-${1}">[${1}]</a></sup>` -}}
+{{- $c := partial "srcmark.html" .Content | string -}}
 {{- $parts := split $c "<h2" -}}
 {{- range $i, $p := $parts }}
 {{- if eq $i 2 }}{{ partial "timeline.html" $ }}{{ partial "adslot.html" (dict "ctx" $ "slot" "mid_article") }}{{ end }}

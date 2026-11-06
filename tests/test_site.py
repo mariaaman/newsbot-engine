@@ -234,14 +234,16 @@ def test_untrusted_params_never_marked_safe():
 
 def test_cite_partial_escapes_before_marking_safe():
     t = (LAYOUTS / "partials/cite.html").read_text(encoding="utf-8")
-    assert t.index("htmlEscape") < t.index("safeHTML")
+    assert 'partial "srcmark.html" (. | htmlEscape)' in t          # escaped BEFORE it reaches the partial that marks it safe
+    m = (LAYOUTS / "partials/srcmark.html").read_text(encoding="utf-8")       # the marker replacement itself escapes name and url
+    assert "(.url | htmlEscape)" in m and "(.name | htmlEscape)" in m and 'hasPrefix .url "http"' in m
 
 
 def test_article_layout_has_required_trust_blocks():
     t = (LAYOUTS / "_default/single.html").read_text(encoding="utf-8")
     for needle in ('i18n "summary"', 'i18n "updated"', 'partial "timeline.html"', 'i18n "source_analysis"', '"confirmed"',
                    '"unclear"', '"disputed"', 'id="source-{{ .id }}"', 'i18n "corrections"', "ai_disclosure",
-                   '"after_summary"', '"mid_article"', '"end_article"', "#source-${1}"):
+                   '"after_summary"', '"mid_article"', '"end_article"', 'partial "srcmark.html"'):
         assert needle in t, needle
 
 

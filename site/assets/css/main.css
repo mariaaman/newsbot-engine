@@ -47,3 +47,5 @@ h3{font-size:1.05rem;margin:1rem 0 .3rem}
 .banner .b-site{position:relative;z-index:1;font-size:.95rem;opacity:.85;letter-spacing:.02em}
 .card .thumb.banner{display:flex;aspect-ratio:16/7;margin:-.8rem -1rem .6rem;padding:.7rem 1rem;border-radius:.6rem .6rem 0 0}.card .thumb.banner .b-cat{font-size:1.25rem}
 .c-bangladesh{--h:150}.c-world{--h:210}.c-politics{--h:350}.c-economy{--h:38}.c-technology{--h:265}.c-sports{--h:18}.c-science{--h:185}.c-entertainment{--h:305}.c-environment{--h:125}.c-education{--h:235}
+.src{color:var(--ok);font-weight:600;font-size:.88em;text-decoration:none;border-bottom:1px dotted currentColor;margin:0 .1em;white-space:nowrap}.src:hover{border-bottom-style:solid}
+.src+.src{margin-left:.45em}
