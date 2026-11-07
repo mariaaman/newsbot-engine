@@ -523,4 +523,4 @@ def test_scaling_doc_matches_the_file_count_script_and_is_linked():
     assert "SCALING.md" in (ROOT / "README.md").read_text(encoding="utf-8")
     # the thresholds the doc promises match what the hourly workflow enforces (default thresholds, no overrides)
     hourly = (ROOT / ".github" / "workflows" / "hourly.yml").read_text(encoding="utf-8")
-    assert "check_file_count.py site/public" in hourly and "--fail" not in hourly and "--warn" not in hourly
+    assert "build_sites.py" in hourly and "check_file_count.py" in (ROOT / "scripts" / "build_sites.py").read_text(encoding="utf-8") and "--fail" not in hourly and "--warn" not in hourly

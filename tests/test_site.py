@@ -259,7 +259,7 @@ def test_head_has_canonical_and_conditional_hreflang():
     assert 'rel="canonical"' in t
     block = t[t.index("if .Translations"):]
     assert block.index('hreflang="{{ .Language.Lang }}"') < block.index("range .Translations")   # self link first
-    assert t.count('<link rel="alternate" hreflang=') == 2 and "x-default" not in t
+    assert t.count('<link rel="alternate" hreflang=') == 3 and "x-default" not in t
 
 
 def test_no_ads_on_policy_pages():
@@ -365,3 +365,26 @@ def test_ad_templates_branch_on_network_and_gate_snippets_behind_consent():
     assert '<template class="ad-snippet">' in slot and "safeHTML" in slot and "adsbygoogle" in slot
     assert 'querySelectorAll("template.ad-snippet")' in consent and "n.async=false" in consent
     assert "}}" not in consent.replace("}}", "", consent.count("{{"))                        # no stray JS braces read as template end
+
+
+def test_separate_sites_templates_and_scripts():
+    head = (LAYOUTS / "partials/head.html").read_text(encoding="utf-8")
+    assert "site.Data.alts" in head and "cloudflareinsights" in head and "analytics_token" in head
+    assert "site.Data.site.sites" in (LAYOUTS / "partials/header.html").read_text(encoding="utf-8")
+    import json
+    import sys
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import deploy_sites
+    calls = []
+
+    class R:
+        def __init__(self, c): self.returncode = c
+
+    def run(cmd, check=False):
+        calls.append(cmd)
+        return R(1 if "p2" in cmd else 0)
+
+    import tempfile, pathlib
+    d = pathlib.Path(tempfile.mkdtemp())
+    m = [{"lang": "en", "public": str(d), "project": "p1"}, {"lang": "bn", "public": str(d), "project": "p2"}]
+    assert deploy_sites.deploy(m, run) == [("en", True), ("bn", False)] and len(calls) == 2   # one failure does not stop the rest

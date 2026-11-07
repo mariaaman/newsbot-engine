@@ -318,7 +318,7 @@ def test_hourly_workflow_notifies_after_everything_and_reports_every_step():
     ids = [s["id"] for s in st if "id" in s]
     named = re.findall(r"(\w+)=\$\{\{ steps\.(\w+)\.outcome \}\}", last["env"]["STEP_OUTCOMES"])
     assert all(a == b and b in ids for a, b in named) and len(named) == len(set(ids))      # every identified step, once
-    for needed in ("run", "commit", "plan", "build", "file_count", "deploy"):
+    for needed in ("run", "commit", "plan", "build", "deploy"):
         assert needed in ids
     engine = next(s for s in st if s.get("id") == "run")
     assert '--report "$RUNNER_TEMP/run_report.json"' in engine["run"] and '--report "$RUNNER_TEMP/run_report.json"' in last["run"]

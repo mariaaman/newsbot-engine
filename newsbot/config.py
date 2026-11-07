@@ -2,6 +2,8 @@
 nothing here is hard-coded policy. Anything external is marked # VERIFY in the YAML."""
 from __future__ import annotations
 
+import re
+
 from pathlib import Path
 from typing import Any, Literal
 
@@ -15,6 +17,34 @@ Lang = str                      # languages the SITE publishes in (output): a co
 
 class _Base(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class SiteTarget(_Base):
+    """One separate website (one language) when site.sites is used."""
+    base_url: str                     # https://news-en.pages.dev  (or your own domain)
+    pages_project: str                # the Cloudflare Pages project this site is deployed to
+    analytics_token: str = ""         # optional Cloudflare Web Analytics token (cookieless visitor counts); the Pages dashboard toggle needs no token
+
+    @field_validator("base_url")
+    @classmethod
+    def _https(cls, v: str) -> str:
+        if not re.match(r"^https://[A-Za-z0-9.-]+(?::\d+)?/?$", v.strip()):
+            raise ValueError("a site base_url must be like https://example.pages.dev (https, no path)")
+        return v.strip().rstrip("/")
+
+    @field_validator("pages_project")
+    @classmethod
+    def _project(cls, v: str) -> str:
+        if not re.match(r"^[a-z0-9][a-z0-9-]{0,57}$", v):
+            raise ValueError("pages_project: lowercase letters, digits and hyphens only")
+        return v
+
+    @field_validator("analytics_token")
+    @classmethod
+    def _token(cls, v: str) -> str:
+        if v and not re.match(r"^[A-Za-z0-9]{16,64}$", v):
+            raise ValueError("analytics_token looks like 32 letters and digits")
+        return v
 
 
 class SiteCfg(_Base):
@@ -32,6 +62,8 @@ class SiteCfg(_Base):
                              "sports", "science", "entertainment", "environment", "education"]
     allowed_topics: list[str] = []
     blocked_topics: list[str] = []
+    sites: dict[str, SiteTarget] = {}  # EMPTY = one website with every language in /bn/ /en/ ... ; filled = one separate website per language (each needs an entry)
+    analytics_token: str = ""         # single-site mode: optional Cloudflare Web Analytics token
 
     @field_validator("languages")
     @classmethod
@@ -48,6 +80,13 @@ class SiteCfg(_Base):
     def _default_in_languages(self) -> "SiteCfg":
         if self.default not in self.languages:
             raise ValueError("site.default must be one of site.languages")
+        if self.sites:
+            if set(self.sites) != set(self.languages):
+                raise ValueError("site.sites needs exactly one entry per language in site.languages (add or remove entries together)")
+            projects = [t.pages_project for t in self.sites.values()]
+            urls = [t.base_url for t in self.sites.values()]
+            if len(set(projects)) != len(projects) or len(set(urls)) != len(urls):
+                raise ValueError("every site in site.sites needs its own pages_project and base_url")
         if len(self.categories) > 12:
             raise ValueError("at most 12 categories (file budget)")
         return self

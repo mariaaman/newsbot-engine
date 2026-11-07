@@ -95,13 +95,7 @@ jobs:
       - name: Build site
         id: build
         if: steps.plan.outputs.deploy == 'true'
-        run: |
-          python scripts/gen_site_config.py --brain brain --sync-content
-          hugo --minify -s site --baseURL "$(python scripts/gen_site_config.py --brain brain --print-base-url)"
-      - name: Check file count (a failure blocks the deploy)
-        id: file_count
-        if: steps.plan.outputs.deploy == 'true'
-        run: python scripts/check_file_count.py site/public
+        run: python scripts/build_sites.py --brain brain          # one site, or one per language (site.sites); each build is size-checked
       - name: Cache npm (wrangler)
         if: steps.plan.outputs.deploy == 'true'
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
@@ -114,7 +108,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx --yes wrangler@4 pages deploy site/public --project-name "$PAGES_PROJECT" --branch main --commit-dirty=true   # VERIFY wrangler major version and flags
+        run: python scripts/deploy_sites.py          # runs wrangler@4 pages deploy for every site in the build manifest
       - name: Record deploy in brain state
         id: record
         if: steps.plan.outputs.deploy == 'true'
@@ -133,5 +127,5 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           PYTHONPATH: ${{ github.workspace }}
           STEP_OUTCOMES: >-
-            check_mode=${{ steps.check_mode.outcome }},checkout_engine=${{ steps.checkout_engine.outcome }},checkout_brain=${{ steps.checkout_brain.outcome }},setup_python=${{ steps.setup_python.outcome }},install=${{ steps.install.outcome }},llm_accounts=${{ steps.llm_accounts.outcome }},run=${{ steps.run.outcome }},commit=${{ steps.commit.outcome }},plan=${{ steps.plan.outcome }},hugo=${{ steps.hugo.outcome }},build=${{ steps.build.outcome }},file_count=${{ steps.file_count.outcome }},deploy=${{ steps.deploy.outcome }},record=${{ steps.record.outcome }}
+            check_mode=${{ steps.check_mode.outcome }},checkout_engine=${{ steps.checkout_engine.outcome }},checkout_brain=${{ steps.checkout_brain.outcome }},setup_python=${{ steps.setup_python.outcome }},install=${{ steps.install.outcome }},llm_accounts=${{ steps.llm_accounts.outcome }},run=${{ steps.run.outcome }},commit=${{ steps.commit.outcome }},plan=${{ steps.plan.outcome }},hugo=${{ steps.hugo.outcome }},build=${{ steps.build.outcome }},deploy=${{ steps.deploy.outcome }},record=${{ steps.record.outcome }}
         run: python -m newsbot notify --brain brain --workflow hourly --report "$RUNNER_TEMP/run_report.json" --pr-url-file "$RUNNER_TEMP/pr_url.txt"

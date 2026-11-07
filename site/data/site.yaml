@@ -10,6 +10,7 @@ ads:
 ai_disclosure:
   bn: এই নিবন্ধটি এআই-সহায়তায় তৈরি এবং আমাদের সম্পাদকীয় নীতি মেনে চলে।
   en: This article is AI-assisted and follows our editorial policy.
+analytics_token: ''
 base_url: https://example.pages.dev/
 bengali_font: false
 categories:
@@ -29,3 +30,5 @@ languages:
 - en
 name: TBD
 rtl: []
+separate: false
+sites: {}

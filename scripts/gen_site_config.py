@@ -94,7 +94,15 @@ def load_site_cfg(brain: Path) -> dict:
             txt_lines.append(line)
         if enabled and not (scripts or slots):
             raise ValueError("ads.enabled is true but ads.scripts and ads.slots are both empty: paste your ad code first")
+    sites = {}
+    for l, t in (site.get("sites") or {}).items():
+        sites[str(l)] = {"base_url": str((t or {}).get("base_url") or "").rstrip("/") + "/",
+                         "pages_project": str((t or {}).get("pages_project") or ""),
+                         "analytics_token": str((t or {}).get("analytics_token") or "")}
+    if sites and set(sites) != set(langs):
+        raise ValueError("site.sites needs exactly one entry per language in site.languages")
     return {
+        "sites": sites, "separate": bool(sites), "analytics_token": str(site.get("analytics_token") or ""),
         "name": str(site.get("name") or "TBD"),
         "base_url": str(site.get("base_url") or "https://example.pages.dev").rstrip("/") + "/",
         "languages": langs, "default": default, "rtl": [l for l in langs if LG.meta(l)["rtl"]],
@@ -160,12 +168,13 @@ HUGO_BEGIN = "# BEGIN GENERATED LANGUAGES"
 HUGO_END = "# END GENERATED LANGUAGES"
 
 
-def hugo_languages_block(langs: list[str], default: str) -> str:
+def hugo_languages_block(langs: list[str], default: str, subdir: bool = True) -> str:
     """The language part of hugo.yaml: every site language, the default one first."""
     order = [default] + [l for l in langs if l != default]
     lines = [f"{HUGO_BEGIN} (scripts/gen_site_config.py rewrites this block from site.languages in newsbot.yaml: edit that, not this)",
              f"defaultContentLanguage: {default}",
-             "defaultContentLanguageInSubdir: true    # /bn/ and /en/ ...; the root only redirects (and serves static/404.html)",
+             "defaultContentLanguageInSubdir: true    # /bn/ and /en/ ...; the root only redirects (and serves static/404.html)" if subdir
+             else "defaultContentLanguageInSubdir: false   # one-language site (site.sites): served at its root",
              "disableDefaultLanguageRedirect: false", "languages:"]
     for weight, l in enumerate(order, 1):
         m = LG.meta(l)
@@ -181,8 +190,8 @@ def i18n_yaml(lang: str) -> str:
            "# To use your own wording: delete this line and edit the file.\n" + "\n".join(rows) + "\n"
 
 
-def not_found_page(langs: list[str]) -> str:
-    links = " &middot; ".join(f'<a href="/{l}/">{LG.meta(l)["native"]}</a>' for l in langs)
+def not_found_page(langs: list[str], sites: dict | None = None) -> str:
+    links = " &middot; ".join(f'<a href="{(sites or {}).get(l, {}).get("url", "/" + l + "/")}">{LG.meta(l)["native"]}</a>' for l in (sites or langs))
     return ('<!DOCTYPE html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">\n'
             '<meta name="robots" content="noindex"><title>404</title>\n'
             '<style>body{font:1.1rem/1.6 system-ui,"Noto Sans Bengali","Nirmala UI",sans-serif;max-width:36rem;margin:4rem auto;padding:0 1rem}</style></head>\n'
@@ -195,7 +204,7 @@ def write_language_files(data: dict, site: Path) -> list[str]:
     hugo = site / "hugo.yaml"
     if hugo.exists():
         text = hugo.read_text(encoding="utf-8")
-        new = re.sub(re.escape(HUGO_BEGIN) + r".*?" + re.escape(HUGO_END), lambda _: hugo_languages_block(data["languages"], data["default"]),
+        new = re.sub(re.escape(HUGO_BEGIN) + r".*?" + re.escape(HUGO_END), lambda _: hugo_languages_block(data["languages"], data["default"], not data.get("separate")),
                      text, count=1, flags=re.S)
         if new == text and HUGO_BEGIN not in text:
             raise ValueError("site/hugo.yaml has no GENERATED LANGUAGES block")
@@ -212,7 +221,7 @@ def write_language_files(data: dict, site: Path) -> list[str]:
             f.write_text(text, encoding="utf-8")
             changed.append(f"i18n/{lang}.yaml")
     (site / "static").mkdir(parents=True, exist_ok=True)
-    page = not_found_page(data["languages"])
+    page = not_found_page(data["languages"], data.get("sites_public"))
     nf = site / "static" / "404.html"
     if not nf.exists() or nf.read_text(encoding="utf-8") != page:
         nf.write_text(page, encoding="utf-8")
@@ -225,12 +234,40 @@ def unfilled_placeholders(site: Path) -> list[str]:
                   if "[OWNER:" in p.read_text(encoding="utf-8"))
 
 
+def target_data(data: dict, lang: str) -> dict:
+    """The data for ONE separate website: only its language, its own address, and the other sites for the language switcher."""
+    t = data["sites"][lang]
+    d = dict(data)
+    d.update({"languages": [lang], "default": lang, "rtl": [lang] if LG.meta(lang)["rtl"] else [], "base_url": t["base_url"],
+              "analytics_token": t["analytics_token"], "separate": True,
+              "sites_public": {l: {"url": x["base_url"], "name": LG.meta(l)["native"]} for l, x in data["sites"].items()}})
+    return d
+
+
+def alts_map(brain: Path, data: dict) -> dict:
+    """translationKey -> {lang: url of that language's article}, from the published articles in the brain (separate sites only)."""
+    out: dict[str, dict[str, str]] = {}
+    for lang, t in data["sites"].items():
+        for f in sorted((Path(brain) / "content" / lang).glob("*.md")):
+            try:
+                head = f.read_text(encoding="utf-8").split("---", 2)
+                fm = yaml.safe_load(head[1]) if len(head) >= 3 else {}
+            except (OSError, yaml.YAMLError):
+                continue
+            key, slug = (fm or {}).get("translationKey"), (fm or {}).get("slug") or f.stem
+            if key:
+                out.setdefault(str(key), {})[lang] = f"{t['base_url']}{slug}/"
+    return {k: v for k, v in out.items() if len(v) > 1}
+
+
 def write_site_files(data: dict, site: Path) -> None:
     (site / "data").mkdir(parents=True, exist_ok=True)
     (site / "static").mkdir(parents=True, exist_ok=True)
+    public = {k: v for k, v in data.items() if k not in ("sites", "sites_public")}
+    public["sites"] = data.get("sites_public") or {}        # the language switcher; pages_project names stay out of the site
     (site / "data" / "site.yaml").write_text(
         "# GENERATED by scripts/gen_site_config.py from the brain config. Do not edit.\n"
-        + yaml.safe_dump(data, allow_unicode=True, sort_keys=True), encoding="utf-8")
+        + yaml.safe_dump(public, allow_unicode=True, sort_keys=True), encoding="utf-8")
     (site / "static" / "ads.txt").write_text(ads_txt(data), encoding="utf-8")
     (site / "static" / "robots.txt").write_text(robots_txt(data), encoding="utf-8")
 

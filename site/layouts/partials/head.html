@@ -10,7 +10,13 @@
 {{- else }}
 <link rel="canonical" href="{{ .Permalink }}">
 {{- end }}
-{{- /* hreflang only where a translation sibling exists (same translationKey / path) */}}
+{{- /* separate sites: hreflang from data/alts.json (translationKey -> {lang: url}); one site: Hugo translations */}}
+{{- $alts := site.Data.alts }}
+{{- with and $alts .Params.translationKey }}{{ with index $alts . }}
+{{- range $l, $u := . }}
+<link rel="alternate" hreflang="{{ $l }}" href="{{ $u }}">
+{{- end }}
+{{- end }}{{- end }}
 {{- if .Translations }}
 <link rel="alternate" hreflang="{{ .Language.Lang }}" href="{{ .Permalink }}">
 {{- range .Translations }}
@@ -46,3 +52,6 @@
 {{ partial "jsonld.html" . }}
 {{- end }}
 {{ partial "adhead.html" . }}
+{{- with $d.analytics_token }}
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "{{ . }}"}'></script>
+{{- end }}

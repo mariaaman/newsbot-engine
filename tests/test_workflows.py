@@ -102,10 +102,10 @@ def test_hourly_flow_order_and_guards():
         return next(i for i, c in enumerate(cmds) if needle in c)
 
     order = [idx("-m newsbot run"), idx("brain_commit.sh brain \"$MODE\""), idx("deploy-needed"),
-             idx("--sync-content"), idx("check_file_count.py"), idx("wrangler"), idx("mark-deployed")]
+             idx("build_sites.py"), idx("deploy_sites.py"), idx("mark-deployed")]
     assert order == sorted(order) and len(set(order)) == len(order)
     plan = next(s for s in st if s.get("id") == "plan")
-    for needle in ("--sync-content", "check_file_count.py", "wrangler", "mark-deployed", "actions-hugo"):
+    for needle in ("build_sites.py", "deploy_sites.py", "mark-deployed", "actions-hugo"):
         s = st[idx(needle)]
         assert s["if"] == "steps.plan.outputs.deploy == 'true'", needle      # nothing changed -> no Hugo, no deploy
         assert not s.get("continue-on-error")                                # a file-count failure blocks the deploy
@@ -126,7 +126,7 @@ def test_hourly_secrets_are_scoped_to_the_steps_that_need_them():
     for s in steps(wf):
         env = s.get("env") or {}
         assert not any(k in env for k in ("GROQ_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY"))
-        if "CLOUDFLARE_API_TOKEN" in env and "wrangler" not in s.get("run", ""):
+        if "CLOUDFLARE_API_TOKEN" in env and "deploy_sites" not in s.get("run", ""):
             assert "-m newsbot run" in s["run"]
 
 
