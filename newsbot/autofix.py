@@ -119,12 +119,12 @@ def _fix_paragraph(par: str, ctx: _Ctx) -> str:
     return " ".join(keep)
 
 
-def autofix_article(art: dict, fs, lang: str, qa) -> tuple[dict, int, int] | None:
+def autofix_article(art: dict, fs, lang: str, qa, lead: dict | None = None) -> tuple[dict, int, int] | None:
     """(edited copy, sentences corrected, sentences removed) or None when nothing can or should be done."""
     if not set(qa.failures) & FIXABLE:
         return None
     nums, _vocab, conf = fact_vocab(fs)
-    names, numbers = offending_terms(art, fs)
+    names, numbers = offending_terms(art, fs, lead)
     # act only on what the gates actually rejected: a language without a name check (es, fr...) must not lose sentences over "names"
     names = names if "unsupported_name" in qa.failures else []
     numbers = numbers if "unsupported_number" in qa.failures else []

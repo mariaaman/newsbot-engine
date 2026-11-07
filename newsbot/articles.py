@@ -173,23 +173,24 @@ def _repair(llm, brain, cfg, fs, lang, art, qa, recent, embedder, est, prev, now
     return best_art, best_qa, tried
 
 
-def _autofix(llm, brain, cfg, fs, lang, art, qa, recent, embedder, prev):
+def _autofix(llm, brain, cfg, fs, lang, art, qa, recent, embedder, prev, lead=None):
     """LLM-free edit of an unsupported figure / name / claim (see newsbot.autofix). Kept only if it removes a failure."""
     if not getattr(cfg.qa, "autofix", True):
         return art, qa
     from newsbot.autofix import autofix_article
-    res = autofix_article(art, fs, lang, qa)
+    res = autofix_article(art, fs, lang, qa, lead=lead)
     if res is None:
+        log.info("autofix gave_up story=%s lang=%s failures=%s", fs.story_id, lang, ",".join(qa.failures))   # nothing to change, or too much would be lost
         return art, qa
     art2, fixed, dropped = res
-    qa2 = run_gates(art2, fs, lang, cfg, recent=recent, embedder=embedder, llm=llm, brain=brain, previous=prev)
+    qa2 = run_gates(art2, fs, lang, cfg, recent=recent, embedder=embedder, llm=llm, brain=brain, previous=prev, lead=lead)
     log.info("autofix story=%s lang=%s corrected=%d removed=%d before=%s after=%s", fs.story_id, lang, fixed, dropped,
              ",".join(qa.failures), ",".join(qa2.failures) or "-")
     _gate_record(fs, lang, "autofix", art2, qa2)
     return (art2, qa2) if len(qa2.failures) < len(qa.failures) else (art, qa)
 
 
-def _learn_from(fs, lang, art, qa, verdicts, autofixed: bool) -> None:
+def _learn_from(fs, lang, art, qa, verdicts, autofixed: bool, lead=None) -> None:
     """Statistics for every draft, and one private review line for a draft that STILL fails after every automatic fix."""
     from newsbot import learned
     from newsbot.qa import article_text, offending_terms, strip_markers
@@ -200,7 +201,7 @@ def _learn_from(fs, lang, art, qa, verdicts, autofixed: bool) -> None:
         learned.bump("autofix_kept")
     if not qa.failures:
         return
-    names, numbers = offending_terms(art, fs)
+    names, numbers = offending_terms(art, fs, lead)
     text = art["title"] + "\n" + article_text(art)
     ctx = []
     for t in (names + numbers)[:4]:
@@ -267,16 +268,16 @@ def produce_articles(fs: FactSheet, languages: list[str], cfg, brain, llm, *, em
         verdicts: dict = {}
         if "unsupported_name" in qa.failures and getattr(cfg.qa, "diagnose", True):
             from newsbot.diagnose import diagnose_names
-            saved, verdicts = diagnose_names(llm, brain, cfg, fs, lang, art, qa)
+            saved, verdicts = diagnose_names(llm, brain, cfg, fs, lang, art, qa, lead_art)
             if saved:                                                    # a safe rule was learned: judge the same draft again
                 qa = run_gates(art, fs, lang, cfg, recent=recent, embedder=embedder, llm=llm, brain=brain, previous=prev, lead=lead_art)
                 _gate_record(fs, lang, "learned", art, qa)
         before_fix = art
         if qa.failures and set(qa.failures) <= REPAIRABLE:
-            art, qa = _autofix(llm, brain, cfg, fs, lang, art, qa, recent, embedder, prev)
+            art, qa = _autofix(llm, brain, cfg, fs, lang, art, qa, recent, embedder, prev, lead_art)
         if qa.failures and set(qa.failures) <= REPAIRABLE and not tr:          # a translation is never rewritten: it is checked against its lead
             art, qa, _ = _repair(llm, brain, cfg, fs, lang, art, qa, recent, embedder, est, prev, now)
-        _learn_from(fs, lang, art, qa, verdicts, autofixed=art is not before_fix)
+        _learn_from(fs, lang, art, qa, verdicts, autofixed=art is not before_fix, lead=lead_art)
         results[lang] = ArticleResult(lang, qa.disposition, art, qa)
         DIAG.add("article", story=fs.story_id, lang=lang, status=qa.disposition, failures=list(qa.failures))
         log.info("article story=%s lang=%s status=%s failures=%s review=%s sanitized=%d", fs.story_id, lang,

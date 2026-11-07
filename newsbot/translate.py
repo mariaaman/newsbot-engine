@@ -36,7 +36,9 @@ HARD RULES (these are checked by code)
    paragraphs, and how an outlet or a term is explained. You may drop a minor detail, never change a fact.
 4. Audience guidance below says what this edition's readers care about. Use it only to choose emphasis and wording. It never allows a fact
    that is not in the English article; where the article does not say how the story affects these readers, do not claim an effect.
-5. No quotation marks around words. Return ONLY one JSON object with the same fields as the input: title, summary, body_markdown,
+5. Translate EVERY text field: title, summary, body_markdown, each timeline "time" and "text", and every item of confirmed, unclear and
+   disputed. Nothing may be left in the source language (names of people and places in their usual form for this language are fine).
+6. No quotation marks around words. Return ONLY one JSON object with the same fields as the input: title, summary, body_markdown,
    timeline [{time,text}], confirmed, unclear, disputed, sources [{id}], category, slug. Keep sources, category and slug as given."""
 
 _KEEP = ("title", "summary", "body_markdown", "timeline", "confirmed", "unclear", "disputed", "category", "slug")
@@ -60,10 +62,33 @@ def estimate_translate_tokens(lead: dict, lang: str, cfg, brain) -> int:
     return estimate_tokens(build_messages(lead, lang, cfg, brain), cfg.write.max_tokens)
 
 
+def _entries(a: dict) -> list[tuple[str, str]]:
+    out = [("timeline", e.get("time", "")) for e in a["timeline"]] + [("timeline", e.get("text", "")) for e in a["timeline"]]
+    for k in ("confirmed", "unclear", "disputed"):
+        out += [(k, x) for x in a[k]]
+    return out
+
+
+def untranslated(lead: dict, art: dict) -> list[str]:
+    """Lists the model handed back still in the lead's words (a recurring slip: the body is translated, the timeline and fact lists are not)."""
+    mine = {t.strip() for _k, t in _entries(art) if len(t.strip()) >= 8}
+    return sorted({k for k, t in _entries(lead) if len(t.strip()) >= 8 and t.strip() in mine})
+
+
 def translate_article(llm, brain, cfg, fs, lang: str, lead: dict) -> tuple[dict, int]:
-    """(normalised article in `lang`, sanitiser removals). Raises BudgetExhausted / LLMError like write_article."""
-    raw = llm.complete(f"translate_{lang}", build_messages(lead, lang, cfg, brain), schema=validate_article,
-                       max_tokens=cfg.write.max_tokens)
+    """(normalised article in `lang`, sanitiser removals). Raises BudgetExhausted / LLMError like write_article.
+    If the lists came back untranslated, ONE more try says so (the extra cost only occurs when the slip does)."""
+    msgs = build_messages(lead, lang, cfg, brain)
+    raw = llm.complete(f"translate_{lang}", msgs, schema=validate_article, max_tokens=cfg.write.max_tokens)
+    try:
+        left = untranslated(lead, validate_article(dict(raw)))
+    except ValueError:
+        left = []
+    if left:
+        msgs = msgs + [{"role": "assistant", "content": json.dumps(raw, ensure_ascii=False)},
+                       {"role": "user", "content": "These fields are still in the source language: " + ", ".join(left) +
+                        f". Return the complete JSON again with EVERY field in {LANG_NAMES.get(lang, lang)}."}]
+        raw = llm.complete(f"translate_{lang}", msgs, schema=validate_article, max_tokens=cfg.write.max_tokens)
     raw = dict(raw)
     raw["slug"], raw["category"] = lead["slug"], lead["category"]          # the lead decides these; a translation never does
     raw["sources"] = [{"id": s["id"]} for s in lead["sources"]]
@@ -78,6 +103,8 @@ def fidelity(lead: dict, art: dict) -> list[str]:
     an = numbers_in(_numbers_text(art["title"] + "\n" + article_text(art)))
     if an - ln:
         out.append("translation_added_number")
+    if untranslated(lead, art):
+        out.append("translation_untranslated")
     if set(_MARKER.findall(article_text(art))) - set(_MARKER.findall(article_text(lead))):
         out.append("translation_markers")                     # a citation the lead does not have
     return out

@@ -15,7 +15,7 @@ import re
 from newsbot import learned
 from newsbot.llm import BudgetExhausted, LLMError, estimate_tokens
 from newsbot.prompts import load_prompt, wrap_untrusted
-from newsbot.qa import fact_vocab, offending_terms, raw_words, strip_markers
+from newsbot.qa import fact_vocab, lead_vocab, offending_terms, raw_words, strip_markers
 
 MAX_TERMS = 8
 BUILTIN = """You help a news engine understand why its quality gate rejected some names. The gate flags a capitalised name in the draft
@@ -45,12 +45,12 @@ def _context(text: str, term: str) -> str:
     return ""
 
 
-def diagnose_names(llm, brain, cfg, fs, lang: str, art: dict, qa) -> tuple[int, dict]:
+def diagnose_names(llm, brain, cfg, fs, lang: str, art: dict, qa, lead: dict | None = None) -> tuple[int, dict]:
     """(rules saved, verdict per flagged name). 0 rules = nothing changed, the caller need not re-run the gates."""
     if "unsupported_name" not in qa.failures:
         return 0, {}
     from newsbot.qa import article_text
-    names, _ = offending_terms(art, fs)
+    names, _ = offending_terms(art, fs, lead)
     names = names[:MAX_TERMS]
     if not names:
         return 0, {}
@@ -64,10 +64,10 @@ def diagnose_names(llm, brain, cfg, fs, lang: str, art: dict, qa) -> tuple[int, 
     msgs = [{"role": "system", "content": system},
             {"role": "user", "content": wrap_untrusted("diagnose_data", json.dumps(payload, ensure_ascii=False))}]
     try:
-        if not llm.can_run("diagnose", estimate_tokens(msgs, 600)):
+        if not llm.can_run("diagnose", estimate_tokens(msgs, 2500)):
             learned.bump("diagnose_skipped_budget")
             return 0, {}
-        res = llm.complete("diagnose", msgs, schema=_validate, max_tokens=600)
+        res = llm.complete("diagnose", msgs, schema=_validate, max_tokens=2500)
     except (BudgetExhausted, LLMError):
         learned.bump("diagnose_failed")
         return 0, {}
@@ -77,6 +77,7 @@ def diagnose_names(llm, brain, cfg, fs, lang: str, art: dict, qa) -> tuple[int, 
     learned.bump("diagnose_call")
     fact_text = " ".join(f.statement + " " + f.note for f in fs.facts).lower()
     _n, vocab, _c = fact_vocab(fs)
+    vocab = vocab | lead_vocab(lead)
     saved, verdicts = 0, {}
     for t in res["terms"]:
         if not isinstance(t, dict) or t.get("term") not in names:

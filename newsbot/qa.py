@@ -121,7 +121,7 @@ def _numbers_text(text: str) -> str:
 
 # Office and role words that are ordinary English, not names of people, places or organisations. A name still has to be
 # in the fact sheet; these only describe a role ("the Senator", "Parliament") and carry no fact of their own.
-ROLE_WORDS = set("""president prime minister senator parliament member members justice king queen section article citizen
+ROLE_WORDS = set("""european asian african gregorian islamic christian muslim jewish arab president prime minister senator parliament member members justice king queen section article citizen
 citizens ministry government council committee court police army navy force forces party leader leaders chairman chair
 spokesman spokesperson official officials mayor governor judge""".split())
 _HYPHENS = re.compile("[\u2010\u2011\u2012\u2013\u2014\u2212-]")
@@ -203,10 +203,16 @@ def llm_check(llm, brain, a: dict, fs: FactSheet) -> list[str]:
 
 # ---------------- the gates ----------------
 
-def offending_terms(a: dict, fs: FactSheet) -> tuple[list[str], list[str]]:
+def lead_vocab(lead: dict | None) -> set[str]:
+    """Latin words of the lead-language article: a translation may use any name the already-checked lead used (e.g. "AR-15")."""
+    return {w.lower() for w in raw_words(lead["title"] + " " + article_text(lead))} if lead else set()
+
+
+def offending_terms(a: dict, fs: FactSheet, lead: dict | None = None) -> tuple[list[str], list[str]]:
     """(names, numbers) the article uses that the fact sheet does not support. Used only to tell the writer what to
     remove in its one repair attempt; the words are never logged (public logs carry counts only)."""
     nums, vocab, _ = fact_vocab(fs)
+    vocab = vocab | lead_vocab(lead)
     all_text = a["title"] + "\n" + article_text(a)
     return unsupported_names(all_text, vocab), sorted(numbers_in(_numbers_text(all_text)) - nums)
 
@@ -274,7 +280,7 @@ def run_gates(a: dict, fs: FactSheet, lang: str, cfg, *, recent: list | None = N
     extra = numbers_in(_numbers_text(all_text)) - nums
     if extra:
         fail("unsupported_number", count=len(extra))
-    names = unsupported_names(all_text, vocab) if L.meta(lang)["names"] else []     # German capitalises every noun: no name check
+    names = unsupported_names(all_text, vocab | lead_vocab(lead)) if L.meta(lang)["names"] else []     # German capitalises every noun: no name check
     if names:
         fail("unsupported_name", count=len(names))
     confirmed_facts = [f for f in fs.facts if f.status == "confirmed"]

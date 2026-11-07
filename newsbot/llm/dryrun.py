@@ -108,7 +108,11 @@ def _write(lang: str):
 def _translate(messages) -> dict:
     """Stand-in translator: hands the article back unchanged (a faithful 'translation' for the offline tests)."""
     m = re.search(r"<article_data>\n(.*?)\n</article_data>", messages[-1]["content"], re.S)
-    return json.loads(m.group(1)) if m else {}
+    a = json.loads(m.group(1)) if m else {}
+    for k in ("confirmed", "unclear", "disputed"):                     # "translate" the lists too (the engine rejects lists left untranslated)
+        a[k] = ["~ " + x for x in a.get(k, [])]
+    a["timeline"] = [{**e, "time": "~ " + e.get("time", ""), "text": "~ " + e.get("text", "")} for e in a.get("timeline", [])]
+    return a
 
 
 def dry_run_provider() -> MockProvider:
