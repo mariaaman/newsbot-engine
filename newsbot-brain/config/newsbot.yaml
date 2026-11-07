@@ -1,0 +1,91 @@
+site:
+  languages: [bn, en, es, fr, hi]   # the 5 languages of the site (the dashboard offers only these 5)
+  default: bn
+  name: "Most Important News"
+  auto_sites: "mostimportantnews"   # each language gets its own free site https://mostimportantnews-<lang>.pages.dev (projects created automatically)
+  base_url: "https://mostimportantnews-en.pages.dev"
+  bengali_font: false     # true after you add static/fonts/NotoSansBengali-subset.woff2 (see docs/SITE.md)
+  ai_disclosure:          # shown on every article (spec rule 5)
+    bn: "এই নিবন্ধটি এআই-সহায়তায় তৈরি এবং আমাদের সম্পাদকীয় নীতি মেনে চলে।"
+    en: "This article is AI-assisted and follows our editorial policy."
+  categories: [bangladesh, world, politics, economy, technology, sports, science, entertainment, environment, education]
+  allowed_topics: []
+  blocked_topics: [gossip, celebrity-rumour, adult, gambling]
+limits:
+  max_new_per_day: 24
+  max_updates_per_story_per_day: 3
+  min_hours_between_updates: 2
+  min_independent_sources: 2      # independent organisations (any language) that must cover a story
+  routing_mode: cross_language    # a story found in ANY language is written in every site language (bn, en, es, fr, hi)
+  routing_min_orgs: 2
+  max_new_per_run: 1              # one full article per hourly run (each costs minutes and many tokens); the rest wait
+  max_sources_per_story: 7        # pages read per story (distinct organisations; more = a fuller article, more tokens)
+  max_items_per_run: 800          # newest feed items kept per run (20 languages, ~160 feeds)
+  max_item_age_hours: 36
+  max_items_per_feed: 30
+  feed_workers: 8
+  diversity_window: 8             # variety: the last 8 stories written count against the same lead language
+  diversity_penalty: 0.25         # so Japanese, Chinese and other stories get their turn, not only Bangladeshi ones
+  min_update_fact_words: 5   # a new fact shorter than this is a tiny change and does not justify an update
+  insufficient_sources_cooldown_hours: 3   # a story that could not be verified (too few trusted pages) is not re-fetched for this long; 0 = every hour
+publish:
+  mode: auto          # review | auto (use review for the first weeks)
+scoring:
+  threshold: 0.45
+  velocity_window_hours: 3
+  breadth_norm: 4
+  weights: {velocity: 0.3, breadth: 0.25, trends: 0.2, recency: 0.1, topic_fit: 0.15, saturation: 0.2, global_reach: 0.15}   # global_reach: bonus for stories covered in several languages
+clustering:
+  embedding_threshold: 0.74       # cosine; unrelated stories merged -> raise (0.78); same story split -> lower (0.70)
+research:                          # how deep to dig for the one story chosen
+  attach_threshold: 0.70          # also pull related single items (closeness to the story centroid); 0 = off
+  max_extra_items: 8
+  window_hours: 48
+  source_chars: 6000              # chars of each source page read (Groq free tier: ~8k tokens per request; raise later)
+  min_facts_to_write: 6           # fewer verified facts than this: wait for more sources instead of writing a thin page
+  claims_per_source: 20           # facts taken from each source (more facts = a richer article)
+llm: {}   # see llm.yaml (models, chains, budgets)
+qa:
+  min_words: {bn: 220, en: 250, es: 250, fr: 250, hi: 250}   # a short true article beats a padded one
+  max_repair_attempts: 0          # no rewrite by the model: the engine fixes or removes the offending sentence itself (autofix)
+  autofix: true
+  diagnose: true                # a name gate failed: one short strong-model call says WHY, code checks it and saves a safe rule (state/learning/)
+  max_ngram_overlap: 0.08
+  min_confirmed_facts: 1        # fewer confirmed facts -> pending/ (low confidence)
+write:
+  max_tokens: 6000              # long articles (Bengali needs many tokens per word); Groq's free 8k tokens/minute caps this
+  translate_from: en            # the English article is written first, carefully; every other language edition is written FROM it for its own readers (not word for word, no new facts); "" = write each language from the fact sheet
+  own_source_chars: 1500        # chars of each same-language source shown to the writer (spelling/wording only)
+  local_angle:                  # who each edition is for; in the non-English editions it only decides emphasis and wording, never adds a fact
+    bn: "Readers in Bangladesh and the Bengali-speaking world: lead with what matters most to them from the facts given; if the article names no link to Bangladesh, say plainly that no direct effect has been reported."
+    en: "Write for an international English-speaking reader: short background, the wider regional or global picture, and what it means beyond the country where it happened."
+    es: "Spanish-speaking readers in Spain, Latin America and beyond: lead with what matters most to them from the facts given; explain institutions and terms briefly; claim no effect on any country the article does not state."
+    fr: "French-speaking readers in France, Africa, Canada and beyond: lead with what matters most to them from the facts given; explain institutions and terms briefly; claim no effect on any country the article does not state."
+    hi: "Hindi-speaking readers in India and beyond: lead with what matters most to them from the facts given; use plain everyday Hindi and explain terms briefly; claim no effect on India that the article does not state."
+# Sensitive topics never auto-publish (spec rule 6): a match sends the draft to pending/ for human review.
+# English: whole words, 'stem*' = prefix. Bengali: substring. Edit freely; keep it broad.
+sensitive:
+  keywords:
+    death: [died, dead, death*, kill*, fatal*, casualt*, drown*, funeral*, body found, মৃত্যু, মারা, নিহত, লাশ, প্রাণহানি, মৃত]
+    crime: [arrest*, accus*, alleg*, convict*, murder*, rape*, assault*, fraud*, indict*, suspect*, trafficking, গ্রেপ্তার, গ্রেফতার, অভিযুক্ত, অভিযোগ, হত্যা, ধর্ষণ, খুন, মামলা, আসামি]
+    health: [vaccin*, cancer, disease*, outbreak*, epidemic, pandemic, virus*, medication*, treatment*, cure, symptom*, dengue, diagnos*, clinical, টিকা, ক্যান্সার, রোগ, চিকিৎসা, ভাইরাস, প্রাদুর্ভাব, ডেঙ্গু, ওষুধ]
+    election: [election*, vote, votes, voting, voter*, ballot*, rigging, rigged, corrupt*, bribe*, impeach*, নির্বাচন, ভোট, দুর্নীতি, ঘুষ, কারচুপি]
+    religion: [communal, religio*, blasphem*, riot*, sectarian, minorit*, সাম্প্রদায়িক, ধর্ম, মসজিদ, মন্দির, গির্জা, দাঙ্গা, সংখ্যালঘু]
+    minors: [child, children, minor, minors, juvenile*, teenager*, underage, under-age, schoolgirl*, schoolboy*, শিশু, কিশোর, নাবালক, অপ্রাপ্তবয়স্ক]
+    financial_advice: [invest in, investment advice, stock tip*, buy shares, should buy, crypto*, bitcoin, financial advice, guaranteed return*, বিনিয়োগ, ক্রিপ্টো, বিটকয়েন]
+ads:
+  enabled: false          # keep false until AdSense approves the site
+  publisher_id: ""        # e.g. pub-1234567890123456
+  consent_required: false # true shows a consent banner and loads ads only after "accept"
+  slots: {}               # optional ad-unit ids: {after_summary: "123", mid_article: "456", end_article: "789"}
+# Telegram: every step result (ok / fail / error / skip) and every review request in one chat.
+# Needs the TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID secrets in the engine repo; without them nothing is sent.
+notify:
+  telegram:
+    enabled: true
+    language: bn              # bn | en: the labels in the messages
+    report_idle_runs: true    # a quiet (silent) report every run; false = only when something happened
+    include_summary: true     # review messages carry the article summary; it passes through Telegram's servers
+    max_lines: 60             # a run report longer than this is cut with a "... more lines" note
+    approve_buttons: true
+    edit_url: "https://newsbot-approve.aman017181412.workers.dev"

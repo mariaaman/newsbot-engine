@@ -1,0 +1,2 @@
+{{- /* Untrusted text: escape FIRST, then turn [S1] markers into source-name links */ -}}
+{{- partial "srcmark.html" (. | htmlEscape) -}}

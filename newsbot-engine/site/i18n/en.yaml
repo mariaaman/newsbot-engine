@@ -1,0 +1,40 @@
+skip: {other: "Skip to content"}
+home: {other: "Home"}
+categories: {other: "Categories"}
+policies: {other: "Site policies"}
+latest: {other: "Latest"}
+trending: {other: "Developing stories"}
+updated: {other: "Updated"}
+published: {other: "Published"}
+summary: {other: "Summary"}
+timeline: {other: "Timeline"}
+source_analysis: {other: "Source analysis"}
+confirmed: {other: "Confirmed (2 or more independent sources)"}
+unclear: {other: "Unclear or single-source"}
+disputed: {other: "Disputed (sources disagree)"}
+sources: {other: "Sources"}
+tier: {other: "Tier"}
+corrections: {other: "Corrections"}
+no_corrections: {other: "No corrections so far. See our"}
+corr_said: {other: "We said"}
+corr_right: {other: "Correct:"}
+no_stories: {other: "No stories yet."}
+newer: {other: "Newer"}
+older: {other: "Older"}
+ad_label: {other: "Advertisement"}
+consent_text: {other: "We use cookies for advertising. Do you accept?"}
+consent_accept: {other: "Accept"}
+consent_decline: {other: "Decline"}
+not_found: {other: "Page not found"}
+not_found_text: {other: "This page does not exist or has moved."}
+footer_note: {other: "Articles are AI-assisted and based on cited sources."}
+cat_bangladesh: {other: "Bangladesh"}
+cat_world: {other: "World"}
+cat_politics: {other: "Politics"}
+cat_economy: {other: "Economy"}
+cat_technology: {other: "Technology"}
+cat_sports: {other: "Sports"}
+cat_science: {other: "Science"}
+cat_entertainment: {other: "Entertainment"}
+cat_environment: {other: "Environment"}
+cat_education: {other: "Education"}

@@ -1,0 +1,32 @@
+name: pin-actions
+# Pins every third-party action in .github/workflows to the exact commit SHA of its current tag (supply-chain safety:
+# a moved or hijacked tag can no longer change what runs with your secrets). Run it once from the Actions tab,
+# review the commit it makes, then run `ci` and `readiness`.
+# Needs the WORKFLOW_PAT secret (same token unzip.yml uses): GITHUB_TOKEN is not allowed to change workflow files.
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: newsbot-pin-actions
+  cancel-in-progress: false
+jobs:
+  pin:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          token: ${{ secrets.WORKFLOW_PAT }}
+      - name: Pin action references to commit SHAs
+        env:
+          GH_TOKEN: ${{ secrets.WORKFLOW_PAT }}
+        run: python3 scripts/pin_actions.py --write
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows
+          git diff --cached --quiet && { echo "nothing to pin"; exit 0; }
+          git commit -q -m "Pin GitHub Actions to commit SHAs"
+          git push -q
