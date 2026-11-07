@@ -18,6 +18,8 @@ def deploy(manifest: list[dict], run=subprocess.run) -> list[tuple[str, bool]]:
     for m in manifest:
         ok = False
         if m.get("project") and Path(m["public"]).is_dir():
+            # create the Pages project if it does not exist yet (fails harmlessly when it does)
+            run(["npx", "--yes", "wrangler@4", "pages", "project", "create", m["project"], "--production-branch", "main"], check=False)
             r = run(["npx", "--yes", "wrangler@4", "pages", "deploy", m["public"], "--project-name", m["project"],
                      "--branch", "main", "--commit-dirty=true"], check=False)
             ok = getattr(r, "returncode", 1) == 0

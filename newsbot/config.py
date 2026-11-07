@@ -62,6 +62,7 @@ class SiteCfg(_Base):
                              "sports", "science", "entertainment", "environment", "education"]
     allowed_topics: list[str] = []
     blocked_topics: list[str] = []
+    auto_sites: str = ""               # a short prefix: every language gets its own free <prefix>-<lang>.pages.dev site automatically
     sites: dict[str, SiteTarget] = {}  # EMPTY = one website with every language in /bn/ /en/ ... ; filled = one separate website per language (each needs an entry)
     analytics_token: str = ""         # single-site mode: optional Cloudflare Web Analytics token
 
@@ -75,6 +76,17 @@ class SiteCfg(_Base):
         if bad:
             raise ValueError(f"unsupported site language(s) {bad}; supported: {sorted(LANGUAGES)}")
         return v
+
+    @model_validator(mode="before")
+    @classmethod
+    def _auto_sites(cls, data):
+        """auto_sites: "<prefix>" -> one separate site per language at https://<prefix>-<lang>.pages.dev (projects are created on first deploy)."""
+        if isinstance(data, dict) and data.get("auto_sites") and not data.get("sites"):
+            pre = str(data["auto_sites"]).strip().lower()
+            data = dict(data)
+            data["sites"] = {l: {"base_url": f"https://{pre}-{l}.pages.dev", "pages_project": f"{pre}-{l}"}
+                             for l in (data.get("languages") or ["bn", "en"])}
+        return data
 
     @model_validator(mode="after")
     def _default_in_languages(self) -> "SiteCfg":

@@ -387,4 +387,10 @@ def test_separate_sites_templates_and_scripts():
     import tempfile, pathlib
     d = pathlib.Path(tempfile.mkdtemp())
     m = [{"lang": "en", "public": str(d), "project": "p1"}, {"lang": "bn", "public": str(d), "project": "p2"}]
-    assert deploy_sites.deploy(m, run) == [("en", True), ("bn", False)] and len(calls) == 2   # one failure does not stop the rest
+    assert deploy_sites.deploy(m, run) == [("en", True), ("bn", False)] and len(calls) == 4   # one failure does not stop the rest
+
+
+def test_auto_sites_prefix_makes_one_free_site_per_language():
+    from newsbot.config import SiteCfg
+    c = SiteCfg(languages=["bn", "en"], default="bn", auto_sites="mvn")
+    assert c.sites["en"].pages_project == "mvn-en" and c.sites["bn"].base_url == "https://mvn-bn.pages.dev"

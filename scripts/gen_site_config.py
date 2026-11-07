@@ -95,7 +95,11 @@ def load_site_cfg(brain: Path) -> dict:
         if enabled and not (scripts or slots):
             raise ValueError("ads.enabled is true but ads.scripts and ads.slots are both empty: paste your ad code first")
     sites = {}
-    for l, t in (site.get("sites") or {}).items():
+    raw_sites = dict(site.get("sites") or {})
+    if site.get("auto_sites") and not raw_sites:               # same rule as newsbot.config.SiteCfg
+        pre = str(site["auto_sites"]).strip().lower()
+        raw_sites = {l: {"base_url": f"https://{pre}-{l}.pages.dev", "pages_project": f"{pre}-{l}"} for l in langs}
+    for l, t in raw_sites.items():
         sites[str(l)] = {"base_url": str((t or {}).get("base_url") or "").rstrip("/") + "/",
                          "pages_project": str((t or {}).get("pages_project") or ""),
                          "analytics_token": str((t or {}).get("analytics_token") or "")}
