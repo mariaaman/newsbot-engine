@@ -1,4 +1,0 @@
-{{- /* usage: partial "catname.html" "world" -> localised category label, falls back to the humanised key */ -}}
-{{- $k := printf "cat_%s" . -}}
-{{- $t := i18n $k -}}
-{{- if and $t (ne $t $k) -}}{{ $t }}{{- else -}}{{ . | humanize }}{{- end -}}

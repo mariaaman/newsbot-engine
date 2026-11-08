@@ -1,9 +1,0 @@
-__pycache__/
-.pytest_cache/
-.venv/
-node_modules/
-/site/public/
-/site/resources/
-.env
-*.env
-.hugo_build.lock

@@ -1,9 +1,0 @@
-{{- /* usage: partial "srcmark.html" <HTML that is already safe/escaped>. Turns [S1] markers into the source's NAME as a green link straight to that source; an id with no listed source stays a small [S1] anchor to the list. */ -}}
-{{- $c := . | string -}}
-{{- range page.Params.sources -}}
-{{- if and .url .name (hasPrefix .url "http") -}}
-{{- $a := printf `<a class="src" href="%s" rel="nofollow noopener" target="_blank">%s</a>` (.url | htmlEscape) (.name | htmlEscape) -}}
-{{- $c = replace $c (printf "[%s]" .id) $a -}}
-{{- end -}}
-{{- end -}}
-{{- $c | replaceRE `\[(S\d+)\]` `<sup class="cite"><a href="#sources">[${1}]</a></sup>` | safeHTML -}}

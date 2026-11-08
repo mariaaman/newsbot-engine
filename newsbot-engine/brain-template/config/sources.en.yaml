@@ -1,5 +1,0 @@
-feeds:
-  - {name: "Google News BD (en)", url: "https://news.google.com/rss?hl=en-BD&gl=BD&ceid=BD:en", tier: 3, lang: en, kind: google_news}   # VERIFY
-  - {name: "BBC News World", url: "https://feeds.bbci.co.uk/news/world/rss.xml", tier: 1, lang: en}   # VERIFY
-  - {name: "The Daily Star", url: "https://www.thedailystar.net/frontpage/rss.xml", tier: 2, lang: en}   # VERIFY
-  - {name: "Al Jazeera", url: "https://www.aljazeera.com/xml/rss/all.xml", tier: 2, lang: en}   # VERIFY

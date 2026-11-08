@@ -1,6 +1,0 @@
-# All URLs: # VERIFY (feeds move or die). Tier 1 = primary/official or top wire; tier 2 = established outlets.
-feeds:
-  - {name: "Google News BD (bn)", url: "https://news.google.com/rss?hl=bn&gl=BD&ceid=BD:bn", tier: 3, lang: bn, kind: google_news}   # VERIFY
-  - {name: "Google Trends BD", url: "https://trends.google.com/trending/rss?geo=BD", tier: 3, lang: bn, kind: google_trends}   # VERIFY, unofficial
-  - {name: "BBC Bangla", url: "https://feeds.bbci.co.uk/bengali/rss.xml", tier: 1, lang: bn}   # VERIFY
-  - {name: "Prothom Alo", url: "https://www.prothomalo.com/feed", tier: 2, lang: bn}   # VERIFY
