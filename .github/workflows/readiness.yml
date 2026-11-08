@@ -68,10 +68,7 @@ jobs:
         continue-on-error: true
         run: python -m newsbot run --mode dry-run --brain brain
       - name: Install Hugo
-        uses: peaceiris/actions-hugo@2752ce1d29631191ea3f27c23495fa06139a5b78  # v3
-        with:
-          hugo-version: "0.139.0"                      # VERIFY current Hugo extended version (same as ci.yml)
-          extended: true
+        run: bash scripts/install_hugo.sh 0.139.0          # retries on GitHub 504s
       - name: Hugo build with the brain content
         id: build
         continue-on-error: true

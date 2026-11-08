@@ -105,7 +105,7 @@ def test_hourly_flow_order_and_guards():
              idx("build_sites.py"), idx("deploy_sites.py"), idx("mark-deployed")]
     assert order == sorted(order) and len(set(order)) == len(order)
     plan = next(s for s in st if s.get("id") == "plan")
-    for needle in ("build_sites.py", "deploy_sites.py", "mark-deployed", "actions-hugo"):
+    for needle in ("build_sites.py", "deploy_sites.py", "mark-deployed", "install_hugo.sh"):
         s = st[idx(needle)]
         assert s["if"] == "steps.plan.outputs.deploy == 'true'", needle      # nothing changed -> no Hugo, no deploy
         assert not s.get("continue-on-error")                                # a file-count failure blocks the deploy

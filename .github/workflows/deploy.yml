@@ -45,10 +45,7 @@ jobs:
         run: python -m newsbot deploy-needed --brain brain >> "$GITHUB_OUTPUT"
       - name: Install Hugo
         if: steps.plan.outputs.deploy == 'true'
-        uses: peaceiris/actions-hugo@2752ce1d29631191ea3f27c23495fa06139a5b78  # v3
-        with:
-          hugo-version: "0.139.0"                      # VERIFY current Hugo extended version (same as ci.yml and hourly.yml)
-          extended: true
+        run: bash scripts/install_hugo.sh 0.139.0          # retries on GitHub 504s
       - name: Build site
         if: steps.plan.outputs.deploy == 'true'
         run: python scripts/build_sites.py --brain brain          # one site, or one per language (site.sites); each build is size-checked
