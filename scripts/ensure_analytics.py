@@ -25,11 +25,19 @@ def _gen():
 
 
 def _call(method: str, url: str, token: str, body: dict | None = None) -> dict:
+    import urllib.error
     import urllib.request
     req = urllib.request.Request(url, method=method, data=json.dumps(body).encode() if body is not None else None,
                                  headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=30) as r:           # noqa: S310 - fixed https API host
-        return json.loads(r.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:       # noqa: S310 - fixed https API host
+            return json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:                          # say WHICH call and WHY (no token or address in the message)
+        try:
+            why = (json.loads(e.read().decode("utf-8")).get("errors") or [{}])[0].get("message", "")
+        except Exception:                                        # noqa: BLE001
+            why = ""
+        raise RuntimeError(f"{method} {url.split('/accounts/')[-1].split('?')[0].split('/', 1)[-1]} http {e.code} {str(why)[:100]}") from None
 
 
 def ensure(hosts: dict[str, str], account: str, token: str, call=_call) -> dict[str, str]:
@@ -72,7 +80,7 @@ def main(argv=None, call=_call) -> int:
     try:
         got = ensure(hosts, account, token, call)
     except Exception as e:                                       # noqa: BLE001 - optional feature, never fail the run
-        print(f"analytics skip error={type(e).__name__} (the API token needs 'Account Settings: Write' for automatic visitor counting)")
+        print(f"analytics skip error={type(e).__name__}: {e}")
         return 0
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(got), encoding="utf-8")
