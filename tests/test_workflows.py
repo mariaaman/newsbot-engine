@@ -126,7 +126,7 @@ def test_hourly_secrets_are_scoped_to_the_steps_that_need_them():
     for s in steps(wf):
         env = s.get("env") or {}
         assert not any(k in env for k in ("GROQ_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY"))
-        if "CLOUDFLARE_API_TOKEN" in env and "deploy_sites" not in s.get("run", ""):
+        if "CLOUDFLARE_API_TOKEN" in env and not any(k in s.get("run", "") for k in ("deploy_sites", "ensure_analytics")):
             assert "-m newsbot run" in s["run"]
 
 

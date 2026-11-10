@@ -34,6 +34,7 @@ site:
 - hreflang ও ভাষা-পরিবর্তন লিংক অন্য সাইটগুলোতে যায় (data/alts.json থেকে)। pages_project নাম সাইটে যায় না।
 
 ## ভিজিটর দেখা
+- স্বয়ংক্রিয় (ডিফল্ট চেষ্টা): `scripts/ensure_analytics.py` প্রতি ডিপ্লয়ে প্রতিটি সাইটের জন্য Cloudflare Web Analytics চালু করে ও টোকেন সাইটে বসায়। এর জন্য Cloudflare API টোকেনে "Account → Account Settings → Edit" অনুমতি লাগে; না থাকলে নীরবে বাদ যায় (রান ফেল হয় না)।
 - Cloudflare Web Analytics: Pages প্রজেক্ট → Metrics → Web Analytics চালু (কোনো কোড লাগে না), অথবা `analytics_token` দিন। কুকি লাগে না।
 - Google Search Console: প্রতিটি সাইট আলাদা property হিসেবে যোগ করুন (sitemap স্বয়ংক্রিয়)।
 - AdSense: সাইট-ভিত্তিক রিপোর্ট।

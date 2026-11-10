@@ -13,7 +13,7 @@ const safeUrl = (u) => (/^https:\/\//.test(u || "") ? u : null);
 const NEWS = "config/newsbot.yaml", LLM = "config/llm.yaml";
 
 // ---------- navigation ----------
-const TABS = [["", "🏠", "হোম"], ["drafts", "📝", "খসড়া"], ["articles", "📰", "আর্টিকেল"], ["settings", "⚙️", "সেটিংস"], ["keys", "🔑", "কী"], ["runs", "▶️", "রান"], ["more", "☰", "আরও"]];
+const TABS = [["", "🏠", "হোম"], ["drafts", "📝", "খসড়া"], ["articles", "📰", "আর্টিকেল"], ["settings", "⚙️", "সেটিংস"], ["keys", "🔑", "কী"], ["visitors", "👥", "ভিজিটর"], ["runs", "▶️", "রান"], ["more", "☰", "আরও"]];
 const tabEls = TABS.map(([id, icon, label]) => h("a", { href: "#/" + id, class: "tab" }, h("b", {}, icon), label));
 nav.replaceChildren(...tabEls);
 const setNav = (name) => tabEls.forEach((el, i) => { el.className = "tab" + (TABS[i][0] === name ? " on" : ""); });
@@ -581,6 +581,27 @@ async function runs() {
 }
 
 // ---------- more: pull requests, two-step, log out, activity ----------
+async function visitors([days]) {
+  const d = [1, 7, 30].includes(Number(days)) ? Number(days) : 7;
+  const o = await api("/api/visitors?days=" + d);
+  const range = h("div", { class: "row" }, [[1, "আজ/২৪ ঘণ্টা"], [7, "৭ দিন"], [30, "৩০ দিন"]].map(([n, t]) => h("a", { class: "btn small" + (n === d ? " primary" : ""), href: "#/visitors/" + n }, t)));
+  if (!o.configured) {
+    return [h("h1", {}, "ভিজিটর"), h("div", { class: "card" }, h("p", {}, "ভিজিটর দেখতে Cloudflare টোকেনে Account Analytics: Read ও Account Settings: Read অনুমতি লাগে, তারপর setup-dashboard workflow আবার চালাতে হয় (গাইড: docs/VISITORS.md)।"))];
+  }
+  const out = [h("h1", {}, "ভিজিটর"), range,
+    h("div", { class: "card" }, h("h2", {}, "মোট"), h("p", {}, `${num(o.total.visits)} ভিজিট · ${num(o.total.views)} পেজভিউ`), h("p", { class: "muted small" }, "Cloudflare Web Analytics (কুকি ছাড়া)। ডেটা আসতে কয়েক মিনিট লাগে।"))];
+  if (o.missing.length) out.push(h("div", { class: "card" }, h("p", { class: "muted" }, `এই সাইটগুলোর কাউন্টার এখনো চালু হয়নি: ${o.missing.join(", ")} (পরের ডিপ্লয়ে চালু হবে)।`)));
+  for (const s of o.sites) {
+    const max = Math.max(1, ...s.daily.map((x) => x.views));
+    out.push(h("div", { class: "card" }, h("h2", {}, `${s.lang === "all" ? "সাইট" : s.lang.toUpperCase()} · ${s.host}`),
+      h("p", {}, `${num(s.visits)} ভিজিট · ${num(s.views)} পেজভিউ`),
+      h("div", { class: "muted small" }, s.daily.map((x) => h("div", {}, `${x.d.slice(5)} `, h("span", { style: `display:inline-block;height:8px;background:var(--accent,#0f766e);width:${Math.max(2, Math.round((x.views / max) * 160))}px` }), ` ${num(x.views)}`))),
+      s.pages.length ? h("div", { class: "small" }, h("strong", {}, "জনপ্রিয় পেজ"), s.pages.map((p) => h("div", { class: "muted" }, `${num(p.views)} — ${p.path}`))) : null));
+  }
+  if (!o.sites.length && !o.missing.length) out.push(h("p", { class: "muted" }, "এখনো কোনো ডেটা নেই।"));
+  return out;
+}
+
 async function more() {
   const [p, sess, au] = await Promise.all([api("/api/prs"), api("/api/session"), api("/api/audit")]);
   const prs = p.prs.map((x) => {
@@ -632,6 +653,6 @@ async function more() {
       au.items.length ? au.items.slice(0, 40).map((x) => h("div", { class: "list-line" }, h("strong", {}, x.action), x.detail ? ` — ${x.detail}` : "", h("div", { class: "muted small" }, `${fmtTime(x.t)} · ${x.ip}`))) : h("p", { class: "muted" }, "কিছু নেই।"))];
 }
 
-const SCREENS = { "": home, drafts, articles, settings, keys, llm, runs, more, draft: draftScreen, article: articleScreen };
+const SCREENS = { "": home, drafts, articles, settings, keys, llm, visitors, runs, more, draft: draftScreen, article: articleScreen };
 window.addEventListener("hashchange", () => route());
 route();

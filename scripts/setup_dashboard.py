@@ -99,6 +99,9 @@ def secrets_step(env: dict, root: Path, http=http, run=subprocess.run, sleep=tim
         return [("workers_subdomain", "fail:" + why)]
     out.append(("workers_subdomain", "ok"))
     payload = {"DASHBOARD_PASSWORD": env["DASHBOARD_PASSWORD"], "GH_TOKEN": env["DASHBOARD_GH_TOKEN"], "SESSION_SECRET": secrets.token_urlsafe(48)}
+    # visitors tab (read only): a separate CLOUDFLARE_ANALYTICS_TOKEN if you made one, else the same Cloudflare token
+    a_tok = env.get("CLOUDFLARE_ANALYTICS_TOKEN") or env["CLOUDFLARE_API_TOKEN"]
+    payload.update({"CF_ANALYTICS_TOKEN": a_tok, "CF_ACCOUNT_ID": env["CLOUDFLARE_ACCOUNT_ID"]})
     fd, path = tempfile.mkstemp(suffix=".json")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:

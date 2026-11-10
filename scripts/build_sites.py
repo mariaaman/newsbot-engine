@@ -59,6 +59,11 @@ def main(argv=None, run=subprocess.run) -> int:
     if data["sites"]:
         for lang in data["languages"]:
             d = gen.target_data(data, lang)
+            if not d.get("analytics_token"):                       # token saved by scripts/ensure_analytics.py (optional)
+                try:
+                    d["analytics_token"] = json.loads((site / "data" / "analytics.json").read_text(encoding="utf-8")).get(lang, "")
+                except (OSError, ValueError):
+                    pass
             public = site / f"public-{lang}"
             res = build_one(gen, d, brain, site, public, a.hugo, run, data)
             code = res if isinstance(res, int) else res[0]

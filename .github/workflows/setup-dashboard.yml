@@ -57,6 +57,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
           DASHBOARD_GH_TOKEN: ${{ secrets.DASHBOARD_GH_TOKEN }}
+          CLOUDFLARE_ANALYTICS_TOKEN: ${{ secrets.CLOUDFLARE_ANALYTICS_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python scripts/setup_dashboard.py secrets

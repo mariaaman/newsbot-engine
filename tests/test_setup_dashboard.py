@@ -75,7 +75,7 @@ def test_secrets_step_stores_three_secrets_privately_and_checks_the_worker():
     res = sd.secrets_step(ENV, project(), http=http, run=run, sleep=lambda s: None)
     assert [s for _, s in res] == ["ok"] * len(res) and res[-1][0] == "telegram_message"
     p = seen["payload"]
-    assert set(p) == {"DASHBOARD_PASSWORD", "GH_TOKEN", "SESSION_SECRET"} and p["GH_TOKEN"] == "gh-dash" and len(p["SESSION_SECRET"]) >= 48
+    assert set(p) == {"DASHBOARD_PASSWORD", "GH_TOKEN", "SESSION_SECRET", "CF_ANALYTICS_TOKEN", "CF_ACCOUNT_ID"} and p["GH_TOKEN"] == "gh-dash" and len(p["SESSION_SECRET"]) >= 48
     assert seen["mode"] == 0o600 and not os.path.exists(seen["path"]) and seen["cmd"][-2:] == ["--name", "newsbot-dashboard"]
     assert "workers.dev" in seen["msg"]["text"] and "a long enough pass" not in seen["msg"]["text"]
     assert not any(secret in " ".join(f"{n}={s}" for n, s in res) for secret in ("cf-tok", "gh-dash", "123:abc", "workers.dev"))

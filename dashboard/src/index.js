@@ -5,6 +5,7 @@ import * as gh from "./github.js";
 import * as settings from "./settings.js";
 import * as articles from "./articles.js";
 import * as llm from "./llm.js";
+import * as analytics from "./analytics.js";
 import { KEYS, testKey, checkSecretName, checkSecretValue, VAR_NAME } from "./keys.js";
 import { reader } from "./yamledit.js";
 
@@ -74,6 +75,7 @@ async function decisions(env) {
 
 const ROUTES = {
   "GET /api/overview": (env) => overview(env),
+  "GET /api/visitors": (env, req, b, u) => analytics.visitors(env, Number(u.searchParams.get("days")) || 7),
   "GET /api/runs": async (env) => ({ runs: await gh.runs(env, 30) }),
   "GET /api/decisions": (env) => decisions(env),
   "GET /api/audit": async (env) => ({ items: parseJson(await env.KV.get("audit"), []) }),

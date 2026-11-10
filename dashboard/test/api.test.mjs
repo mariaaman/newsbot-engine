@@ -241,3 +241,26 @@ test("workflows: only the allow-listed ones can be started; decisions and errors
   const text = await r.text();
   assert.equal(r.status, 500); assert.ok(!text.includes("ghp_") && !text.includes(PASS));
 });
+
+test("visitors: not configured, hosts from auto_sites, per-site numbers from the Cloudflare API", async () => {
+  const { hostsOf, visitors } = await import("../src/analytics.js");
+  assert.deepEqual(hostsOf('site:\n  languages: [bn, en]\n  auto_sites: "Mvn"\n  base_url: "https://x.pages.dev"\n'), { bn: "mvn-bn.pages.dev", en: "mvn-en.pages.dev" });
+  assert.deepEqual(hostsOf('site:\n  languages: [bn]\n  base_url: "https://x.pages.dev"\n'), { all: "x.pages.dev" });
+  const env = mkEnv(); fakeWorld();
+  const cookie = await login(env);
+  assert.deepEqual(await j(await call(env, "/api/visitors", { cookie })), { configured: false, why: "token" });
+  const acc = "a".repeat(32);
+  const env2 = { ...env, CF_ANALYTICS_TOKEN: "tok", CF_ACCOUNT_ID: acc };
+  const seen = [];
+  const f = async (url, init) => {
+    seen.push(String(url));
+    const J = (o) => new Response(JSON.stringify(o), { status: 200 });
+    if (String(url).includes("/rum/site_info/list")) return J({ success: true, result: [{ site_tag: "T1", ruleset: { zone_name: "news-site.pages.dev" } }] });
+    return J({ success: true, data: { viewer: { accounts: [{ daily: [{ count: 10, sum: { visits: 4 }, dimensions: { date: "2026-11-08", siteTag: "T1" } }], pages: [{ count: 7, dimensions: { requestPath: "/a/", siteTag: "T1" } }] }] } } });
+  };
+  const globalFetch = globalThis.fetch;
+  const r = await visitors(env2, 7, f);
+  globalThis.fetch = globalFetch;
+  assert.equal(r.configured, true); assert.ok(seen.some((u) => u.endsWith("/graphql")));
+  assert.equal(r.total.views, r.sites.reduce((n, s) => n + s.views, 0));
+});

@@ -394,3 +394,19 @@ def test_auto_sites_prefix_makes_one_free_site_per_language():
     from newsbot.config import SiteCfg
     c = SiteCfg(languages=["bn", "en"], default="bn", auto_sites="mvn")
     assert c.sites["en"].pages_project == "mvn-en" and c.sites["bn"].base_url == "https://mvn-bn.pages.dev"
+
+
+def test_ensure_analytics_reuses_or_creates_and_never_raises(tmp_path):
+    import sys, json
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import ensure_analytics as ea
+    calls = []
+
+    def call(method, url, token, body=None):
+        calls.append((method, body))
+        if method == "GET":
+            return {"result": [{"host": "a-en.pages.dev", "site_token": "T-EN"}]}
+        return {"result": {"site_token": "T-NEW"}}
+
+    got = ea.ensure({"en": "a-en.pages.dev", "bn": "a-bn.pages.dev"}, "acc", "tok", call)
+    assert got == {"en": "T-EN", "bn": "T-NEW"} and [c[0] for c in calls] == ["GET", "POST"]

@@ -46,6 +46,13 @@ jobs:
       - name: Install Hugo
         if: steps.plan.outputs.deploy == 'true'
         run: bash scripts/install_hugo.sh 0.139.0          # retries on GitHub 504s
+      - name: Turn on free visitor counting (best effort)
+        if: steps.plan.outputs.deploy == 'true'
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: python scripts/ensure_analytics.py --brain brain
       - name: Build site
         if: steps.plan.outputs.deploy == 'true'
         run: python scripts/build_sites.py --brain brain          # one site, or one per language (site.sites); each build is size-checked
