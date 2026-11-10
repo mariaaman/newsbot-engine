@@ -26,13 +26,13 @@ export function hostsOf(yamlText) {
   return out;
 }
 
-async function cf(env, f, method, path, body) {
+async function cf(env, f, method, path, body, step = "") {
   const r = await f(API + path, { method, headers: { Authorization: `Bearer ${env.CF_ANALYTICS_TOKEN}`, "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
   let j = null;
   try { j = await r.json(); } catch { /* not JSON */ }
   if (!r.ok || !j || j.success === false) {
     const why = (j && (j.errors || [])[0] && j.errors[0].message) || `http ${r.status}`;
-    throw new HttpError(502, `Cloudflare said: ${String(why).slice(0, 160)}`);
+    throw new HttpError(502, `${step ? step + ": " : ""}Cloudflare said: ${String(why).slice(0, 160)}`);
   }
   return j;
 }
@@ -48,7 +48,7 @@ export async function visitors(env, days = 7, f = (...a) => fetch(...a)) {
   const file = await gh.getFile(env, "config/newsbot.yaml");
   const hosts = hostsOf(file ? file.text : "");
   const acc = env.CF_ACCOUNT_ID;
-  const list = await cf(env, f, "GET", `/accounts/${acc}/rum/site_info/list?per_page=100`);
+  const list = await cf(env, f, "GET", `/accounts/${acc}/rum/site_info/list?per_page=100`, undefined, "সাইটের তালিকা (Account Settings অনুমতি)");
   const tagOfHost = {};
   for (const s of list.result || []) {
     const h = ((s.ruleset && s.ruleset.zone_name) || s.host || "").toLowerCase();
@@ -60,8 +60,8 @@ export async function visitors(env, days = 7, f = (...a) => fetch(...a)) {
   const missing = Object.entries(hosts).filter(([, h]) => !tagOfHost[h]).map(([l]) => l);
   if (!tags.length) return { configured: true, days, sites: [], missing, total: { visits: 0, views: 0 } };
   const until = new Date(), since = new Date(until.getTime() - days * 86400000);
-  const g = await cf(env, f, "POST", "/graphql", { query: QUERY, variables: { acc, tags, since: since.toISOString(), until: until.toISOString() } });
-  if (g.errors && g.errors.length) throw new HttpError(502, `Cloudflare said: ${String(g.errors[0].message).slice(0, 160)}`);
+  const g = await cf(env, f, "POST", "/graphql", { query: QUERY, variables: { acc, tags, since: since.toISOString(), until: until.toISOString() } }, "ভিজিটর সংখ্যা (Account Analytics অনুমতি)");
+  if (g.errors && g.errors.length) throw new HttpError(502, `ভিজিটর সংখ্যা (Account Analytics অনুমতি): Cloudflare said: ${String(g.errors[0].message).slice(0, 160)}`);
   const a = (((g.data || {}).viewer || {}).accounts || [])[0] || {};
   const per = {};
   for (const l of Object.keys(hosts)) per[l] = { lang: l, host: hosts[l], visits: 0, views: 0, daily: {}, pages: [] };

@@ -5,6 +5,11 @@ name: deploy
 # a waiting one, nothing is lost: every run builds the brain's current main.
 on:
   workflow_dispatch:
+    inputs:
+      force:
+        description: "Build and deploy even if nothing changed (use after switching to separate sites)"
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -42,7 +47,11 @@ jobs:
         run: pip install -e .
       - name: Is a deploy needed?
         id: plan
-        run: python -m newsbot deploy-needed --brain brain >> "$GITHUB_OUTPUT"
+        env:
+          FORCE: ${{ inputs.force }}
+        run: |
+          python -m newsbot deploy-needed --brain brain >> "$GITHUB_OUTPUT"
+          if [ "$FORCE" = "true" ]; then echo "deploy=true" >> "$GITHUB_OUTPUT"; fi
       - name: Install Hugo
         if: steps.plan.outputs.deploy == 'true'
         run: bash scripts/install_hugo.sh 0.139.0          # retries on GitHub 504s
