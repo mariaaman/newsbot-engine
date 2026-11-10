@@ -37,10 +37,18 @@ async function cf(env, f, method, path, body, step = "") {
   return j;
 }
 
-const QUERY = `query($acc: String!, $tags: [string!], $since: Time!, $until: Time!) { viewer { accounts(filter: {accountTag: $acc}) {
-  daily: rumPageloadEventsAdaptiveGroups(limit: 2000, filter: {siteTag_in: $tags, datetime_geq: $since, datetime_leq: $until}, orderBy: [date_ASC]) { count sum { visits } dimensions { date siteTag } }
-  pages: rumPageloadEventsAdaptiveGroups(limit: 200, filter: {siteTag_in: $tags, datetime_geq: $since, datetime_leq: $until}, orderBy: [count_DESC]) { count dimensions { requestPath siteTag } }
+const BY_TAG = { decl: "$tags: [string!]", filt: "siteTag_in: $tags", dim: "siteTag" };
+const BY_HOST = { decl: "$hosts: [string!]", filt: "requestHost_in: $hosts", dim: "requestHost" };
+const query = (m) => `query($acc: String!, ${m.decl}, $since: Time!, $until: Time!) { viewer { accounts(filter: {accountTag: $acc}) {
+  daily: rumPageloadEventsAdaptiveGroups(limit: 2000, filter: {${m.filt}, datetime_geq: $since, datetime_leq: $until}, orderBy: [date_ASC]) { count sum { visits } dimensions { date ${m.dim} } }
+  pages: rumPageloadEventsAdaptiveGroups(limit: 200, filter: {${m.filt}, datetime_geq: $since, datetime_leq: $until}, orderBy: [count_DESC]) { count dimensions { requestPath ${m.dim} } }
 } } }`;
+
+async function stats(env, f, m, vars, key) {
+  const g = await cf(env, f, "POST", "/graphql", { query: query(m), variables: vars }, "ভিজিটর সংখ্যা (Account Analytics অনুমতি)");
+  if (g.errors && g.errors.length) throw new HttpError(502, `ভিজিটর সংখ্যা (Account Analytics অনুমতি): Cloudflare said: ${String(g.errors[0].message).slice(0, 160)}`);
+  return (((g.data || {}).viewer || {}).accounts || [])[0] || {};
+}
 
 export async function visitors(env, days = 7, f = (...a) => fetch(...a)) {
   must([1, 7, 30].includes(days), 400, "days: 1, 7 or 30");
@@ -48,32 +56,39 @@ export async function visitors(env, days = 7, f = (...a) => fetch(...a)) {
   const file = await gh.getFile(env, "config/newsbot.yaml");
   const hosts = hostsOf(file ? file.text : "");
   const acc = env.CF_ACCOUNT_ID;
-  const list = await cf(env, f, "GET", `/accounts/${acc}/rum/site_info/list?per_page=100`, undefined, "সাইটের তালিকা (Account Settings অনুমতি)");
-  const tagOfHost = {};
-  for (const s of list.result || []) {
-    const h = ((s.ruleset && s.ruleset.zone_name) || s.host || "").toLowerCase();
-    if (h && s.site_tag) tagOfHost[h] = s.site_tag;
-  }
-  const langOfTag = {};
-  for (const [lang, host] of Object.entries(hosts)) if (tagOfHost[host]) langOfTag[tagOfHost[host]] = lang;
-  const tags = Object.keys(langOfTag);
-  const missing = Object.entries(hosts).filter(([, h]) => !tagOfHost[h]).map(([l]) => l);
-  if (!tags.length) return { configured: true, days, sites: [], missing, total: { visits: 0, views: 0 } };
   const until = new Date(), since = new Date(until.getTime() - days * 86400000);
-  const g = await cf(env, f, "POST", "/graphql", { query: QUERY, variables: { acc, tags, since: since.toISOString(), until: until.toISOString() } }, "ভিজিটর সংখ্যা (Account Analytics অনুমতি)");
-  if (g.errors && g.errors.length) throw new HttpError(502, `ভিজিটর সংখ্যা (Account Analytics অনুমতি): Cloudflare said: ${String(g.errors[0].message).slice(0, 160)}`);
-  const a = (((g.data || {}).viewer || {}).accounts || [])[0] || {};
+  const range = { acc, since: since.toISOString(), until: until.toISOString() };
+  // 1) preferred: find each site's Web Analytics tag (needs Account Settings: Read). 2) fallback: ask by host name (Account Analytics: Read only).
+  let a, keyOf = {}, shown, missing = [];
+  let list = null;
+  try { list = await cf(env, f, "GET", `/accounts/${acc}/rum/site_info/list?per_page=100`, undefined, "সাইটের তালিকা (Account Settings অনুমতি)"); } catch { list = null; }
+  if (list) {
+    const tagOfHost = {};
+    for (const s of list.result || []) {
+      const h = ((s.ruleset && s.ruleset.zone_name) || s.host || "").toLowerCase();
+      if (h && s.site_tag) tagOfHost[h] = s.site_tag;
+    }
+    for (const [lang, host] of Object.entries(hosts)) if (tagOfHost[host]) keyOf[tagOfHost[host]] = lang;
+    missing = Object.entries(hosts).filter(([, h]) => !tagOfHost[h]).map(([l]) => l);
+    if (!Object.keys(keyOf).length) return { configured: true, days, sites: [], missing, total: { visits: 0, views: 0 } };
+    a = await stats(env, f, BY_TAG, { ...range, tags: Object.keys(keyOf) });
+    shown = (r) => keyOf[r.dimensions.siteTag];
+  } else {
+    for (const [lang, host] of Object.entries(hosts)) keyOf[host] = lang;
+    a = await stats(env, f, BY_HOST, { ...range, hosts: Object.values(hosts) });
+    shown = (r) => keyOf[String(r.dimensions.requestHost || "").toLowerCase()];
+  }
   const per = {};
   for (const l of Object.keys(hosts)) per[l] = { lang: l, host: hosts[l], visits: 0, views: 0, daily: {}, pages: [] };
   for (const r of a.daily || []) {
-    const s = per[langOfTag[r.dimensions.siteTag]]; if (!s) continue;
+    const s = per[shown(r)]; if (!s) continue;
     const v = (r.sum && r.sum.visits) || 0;
     s.visits += v; s.views += r.count; s.daily[r.dimensions.date] = { visits: v, views: r.count };
   }
   for (const r of a.pages || []) {
-    const s = per[langOfTag[r.dimensions.siteTag]]; if (!s || s.pages.length >= 8) continue;
+    const s = per[shown(r)]; if (!s || s.pages.length >= 8) continue;
     s.pages.push({ path: String(r.dimensions.requestPath || "/").slice(0, 120), views: r.count });
   }
-  const sites = Object.values(per).filter((s) => tagOfHost[s.host]).map((s) => ({ ...s, daily: Object.entries(s.daily).sort().map(([d, x]) => ({ d, ...x })) }));
+  const sites = Object.values(per).filter((s) => s.views || s.visits || list).map((s) => ({ ...s, daily: Object.entries(s.daily).sort().map(([d, x]) => ({ d, ...x })) }));
   return { configured: true, days, missing, sites, total: { visits: sites.reduce((n, s) => n + s.visits, 0), views: sites.reduce((n, s) => n + s.views, 0) } };
 }

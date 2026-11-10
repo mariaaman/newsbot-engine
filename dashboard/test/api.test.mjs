@@ -264,3 +264,18 @@ test("visitors: not configured, hosts from auto_sites, per-site numbers from the
   assert.equal(r.configured, true); assert.ok(seen.some((u) => u.endsWith("/graphql")));
   assert.equal(r.total.views, r.sites.reduce((n, s) => n + s.views, 0));
 });
+
+test("visitors: when the site list is refused, it asks by host name instead", async () => {
+  const { visitors } = await import("../src/analytics.js");
+  const env = { ...mkEnv(), CF_ANALYTICS_TOKEN: "tok", CF_ACCOUNT_ID: "a".repeat(32) };
+  fakeWorld();
+  const bodies = [];
+  const f = async (url, init) => {
+    if (String(url).includes("/rum/site_info/list")) return new Response(JSON.stringify({ success: false, errors: [{ message: "Authentication error" }] }), { status: 403 });
+    bodies.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({ success: true, data: { viewer: { accounts: [{ daily: [], pages: [] }] } } }), { status: 200 });
+  };
+  const r = await visitors(env, 7, f);
+  assert.equal(r.configured, true);
+  assert.match(bodies[0].query, /requestHost_in: \$hosts/); assert.ok(Array.isArray(bodies[0].variables.hosts));
+});
