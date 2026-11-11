@@ -128,3 +128,26 @@ def test_autofix_shortens_a_long_headline_and_drops_unresolved_markers():
     res = autofix_article(art, FS, "en", qa)
     assert res and "[S9]" not in res[0]["body_markdown"]
     assert "unresolved_marker" not in run_gates(res[0], FS, "en", make_cfg(), run_llm_check=False).failures
+
+
+def test_a_draft_that_cannot_be_fixed_is_archived_in_rejected_not_left_pending(tmp_path):
+    from newsbot.articles import write_outputs
+    from newsbot.qa import QAResult
+    pub = type("P", (), {"on_failure": "reject", "on_sensitive": "reject", "on_review": "publish"})()
+    q = QAResult(); q.failures = ["unsupported_name"]
+    assert q.route(pub) == ("pending", "rejected")
+    q = QAResult(); q.review = ["sensitive:crime"]
+    assert q.route(pub) == ("pending", "rejected")
+    q = QAResult(); q.review = ["low_confidence"]
+    assert q.route(pub) == ("publish", "")
+    assert QAResult().route(pub) == ("publish", "")
+    assert q.route(type("P", (), {})()) == ("pending", "pending")        # settings absent: the old, safe behaviour
+    # the file goes to rejected/<lang>/
+    cfg = make_cfg(publish={"mode": "auto", "on_failure": "reject"})
+    mock, _ = _mock("Zorblax Quimby opened the line [S1].")
+    llm = build_llm(load_llm_settings(TEMPLATE), None, dry_run=True, mock=mock)
+    cfg = make_cfg(qa={"max_repair_attempts": 0, "autofix": False}, publish={"mode": "auto", "on_failure": "reject"})
+    r = produce_articles(FS, ["en"], cfg, None, llm, recent_by_lang={"en": []})["en"]
+    assert r.status == "pending" and r.hold == "rejected"
+    paths = write_outputs(tmp_path, FS, {"en": r})
+    assert paths[0].startswith("rejected/en/") and (tmp_path / paths[0]).is_file() and not (tmp_path / "pending").exists()

@@ -1,1 +1,1 @@
-v19: false-alarm fixes from real runs (banned words, scaled numbers, 24h times, names, translation claim check, title shortening, marker cleanup)
+v20: nothing waits - on_failure/on_sensitive/on_review, rejected/ archive

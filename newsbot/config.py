@@ -135,6 +135,12 @@ class LimitsCfg(_Base):
 
 class PublishCfg(_Base):
     mode: Literal["review", "auto"] = "review"
+    # What happens to a draft that is not clean. pending = wait in pending/ for a human (the safe default of a new setup);
+    # reject = never wait: the draft is archived in rejected/ (private, for the next upgrade) and the story is closed;
+    # publish (on_sensitive / on_review only) = go live anyway.
+    on_failure: Literal["pending", "reject"] = "pending"        # a gate still failed after the automatic fixes
+    on_sensitive: Literal["pending", "reject", "publish"] = "pending"   # clean, but a sensitive topic matched (qa.sensitive)
+    on_review: Literal["pending", "reject", "publish"] = "pending"      # clean, other review reason (low confidence, ...)
 
 
 class Weights(_Base):

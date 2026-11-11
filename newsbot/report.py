@@ -164,6 +164,9 @@ def _article_events(r: Report, sid: str, results: dict, kind: str, mode: str) ->
         a = res.article
         if not a:
             continue
+        if res.status == "pending" and getattr(res, "hold", "") == "rejected":      # cancelled: archived in rejected/, never waits for a human
+            r.add("publish", "skip", "rejected (archived for the next upgrade)", sid, lang)
+            continue
         status = "pending" if res.status == "pending" else {"review": "awaiting_review", "auto": "published"}.get(mode, "dry_run")
         r.reviews.append({"story_id": sid, "lang": lang, "kind": kind, "status": status, "title": a["title"],
                           "summary": a["summary"], "slug": a["slug"], "reasons": q.reasons() if q is not None else [],

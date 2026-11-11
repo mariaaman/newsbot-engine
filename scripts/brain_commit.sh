@@ -26,8 +26,8 @@ push_main() {   # push HEAD to main; on a race (owner merged a PR meanwhile) reb
 }
 
 case "$MODE" in
-  auto)   git add state pending content ;;
-  review) git add state pending ;;
+  auto)   git add state pending content; [ -d rejected ] && git add rejected ;;
+  review) git add state pending; [ -d rejected ] && git add rejected ;;
   state)  git add state ;;
   *) echo "bad-mode"; exit 2 ;;
 esac

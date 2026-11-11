@@ -29,6 +29,7 @@ class ArticleResult:
     article: dict | None = None
     qa: QAResult | None = None
     path: str | None = None
+    hold: str = "pending"             # for a non-published draft: pending (waits for a human) | rejected (archived, story closed)
 
 
 def load_recent_articles(brain: str | Path | None, lang: str, limit: int = 300) -> list[dict]:
@@ -278,11 +279,24 @@ def produce_articles(fs: FactSheet, languages: list[str], cfg, brain, llm, *, em
         if qa.failures and set(qa.failures) <= REPAIRABLE and not tr:          # a translation is never rewritten: it is checked against its lead
             art, qa, _ = _repair(llm, brain, cfg, fs, lang, art, qa, recent, embedder, est, prev, now)
         _learn_from(fs, lang, art, qa, verdicts, autofixed=art is not before_fix, lead=lead_art)
-        results[lang] = ArticleResult(lang, qa.disposition, art, qa)
-        DIAG.add("article", story=fs.story_id, lang=lang, status=qa.disposition, failures=list(qa.failures))
-        log.info("article story=%s lang=%s status=%s failures=%s review=%s sanitized=%d", fs.story_id, lang,
-                 qa.disposition, ",".join(qa.failures) or "-", ",".join(qa.review) or "-", removed)
+        status, hold = qa.route(cfg.publish)
+        results[lang] = ArticleResult(lang, status, art, qa, hold=hold or "pending")
+        DIAG.add("article", story=fs.story_id, lang=lang, status=status, failures=list(qa.failures))
+        log.info("article story=%s lang=%s status=%s%s failures=%s review=%s sanitized=%d", fs.story_id, lang,
+                 status, "(rejected)" if hold == "rejected" else "", ",".join(qa.failures) or "-", ",".join(qa.review) or "-", removed)
+        if hold == "rejected":
+            _learn_rejected(fs, lang, art, qa)
     return results
+
+
+def _learn_rejected(fs, lang: str, art: dict, qa) -> None:
+    """A draft that was cancelled for review reasons only (no gate failed, e.g. a sensitive topic) is also logged, so the next upgrade can
+    see how many good articles the rules cost. (Gate failures are already in review.jsonl via _learn_from.)"""
+    try:
+        from newsbot import learned
+        learned.bump("rejected_failed" if qa.failures else "rejected_review")
+    except Exception:                                           # noqa: BLE001 - bookkeeping must never stop a run
+        pass
 
 
 def _existing_image(brain: Path, lang: str, slug: str) -> dict | None:
@@ -312,7 +326,7 @@ def write_outputs(brain: str | Path, fs: FactSheet, results: dict[str, ArticleRe
         if r.status == "publish":
             rel, extra = Path("content") / lang / f"{r.article['slug']}.md", {}
         else:
-            rel = Path("pending") / lang / f"{r.article['slug']}.md"
+            rel = Path("rejected" if r.hold == "rejected" else "pending") / lang / f"{r.article['slug']}.md"
             extra = {"pending": {"failures": r.qa.failures, "review": r.qa.review,
                                  "unsupported": r.qa.details.get("unsupported_claims", {}).get("unsupported", [])}}
             off = _offending(r.article, fs, r.qa)

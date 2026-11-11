@@ -47,3 +47,12 @@ Found by reading state/learning/review.jsonl and stats.json after four days:
 - Names: sentence starters ("With", "Neither", "Large"), nationality and party adjectives (Turkish, Democratic), Europe/European, EU/UK/UN, "U.S." are not names.
 - Translations are no longer sent to the model fact-check (it compared French/Hindi text with the English fact sheet and rejected correct claims); the fidelity gate already guards them. A body sentence left in English now counts as untranslated and is retried once.
 - Headlines over the limit are cut at a natural break by the engine; the translation prompt states the length. Citation markers [S#] that name no listed source are dropped by autofix.
+
+## Nothing waits: publish.on_failure / on_sensitive / on_review (v20)
+Each draft is checked, repaired by the engine (autofix), then routed by newsbot.yaml -> publish:
+- gates pass                     -> published at once
+- a gate still fails (on_failure: reject)       -> the draft is archived in `rejected/<lang>/<slug>.md` (private brain; the file lists the failures and the offending names/figures) and the story is closed. The next run's reconcile marks it rejected.
+- clean but sensitive (on_sensitive: reject|publish|pending)
+- clean with a weak review reason, e.g. few confirmed facts (on_review: publish|reject|pending)
+`pending` (the default of a new setup) keeps the old behaviour: wait in pending/ for a human.
+For the next upgrade give Claude: `rejected/` (the files), `state/learning/review.jsonl`, `stats.json` (`rejected_failed`, `rejected_review` count per day) and the latest logs.

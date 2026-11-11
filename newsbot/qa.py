@@ -52,6 +52,19 @@ class QAResult:
     def disposition(self) -> str:
         return "publish" if not self.failures and not self.review else "pending"
 
+    def route(self, pub=None) -> tuple[str, str]:
+        """(status, hold): ("publish", "") or ("pending", "pending" | "rejected"), by the publish.on_* settings (config.PublishCfg)."""
+        if self.failures:
+            return "pending", ("rejected" if getattr(pub, "on_failure", "pending") == "reject" else "pending")
+        sens = [x for x in self.review if x.startswith("sensitive:")]
+        other = [x for x in self.review if not x.startswith("sensitive:")]
+        actions = ([getattr(pub, "on_sensitive", "pending")] if sens else []) + ([getattr(pub, "on_review", "pending")] if other else [])
+        if "reject" in actions:
+            return "pending", "rejected"
+        if "pending" in actions:
+            return "pending", "pending"
+        return "publish", ""
+
     def reasons(self) -> list[str]:
         return [*self.failures, *self.review]
 
