@@ -92,3 +92,39 @@ def test_us_is_not_an_invented_name_when_the_fact_sheet_says_united_states():
     from newsbot.qa import unsupported_names
     assert unsupported_names("Voters in the US went to the polls.", {"voters", "in", "the", "went", "to", "polls", "united", "states"}) == []
     assert unsupported_names("Voters in the US went to the polls.", {"voters", "in", "the", "went", "to", "polls"}) == ["US"]
+
+
+def test_real_run_false_alarms_are_not_failures():
+    from newsbot.qa import BANNED, extra_numbers, lead_numbers, unsupported_names
+    # Spanish "todo" and AI news saying "language model" are ordinary text
+    assert "todo" not in BANNED and "language model" not in BANNED
+    # "$21 billion" when the facts carry 21 and 4 (the unit spelled another way)
+    assert extra_numbers({"21000000000", "4000000000", "2500000"}, {"21", "4", "2.5"}) == set()
+    assert extra_numbers({"21000"}, {"21"}) == {"21000"}                  # thousands are not accepted this way
+    assert extra_numbers({"21000000000"}, {"22"}) == {"21000000000"}
+    # 12-hour clock in the lead, 24-hour clock in a translation
+    lead = {"title": "x", "summary": "", "body_markdown": "It began at 5 p.m. and ended at 8 p.m. [S1]", "timeline": [], "confirmed": [], "unclear": [], "disputed": []}
+    assert {"17", "20"} <= lead_numbers(lead)
+    assert extra_numbers({"17", "20"}, set(), lead) == set()
+    # names: sentence starters, nationality / party adjectives, Europe vs European, US / EU / U.S.
+    v = {"report"}
+    for text in ("With Republicans out of both chambers, little changed.", "Neither Rahman nor aides spoke.", "Large cyber attacks rose.",
+                 "The Turkish and Iranian sides met.", "A Democratic majority formed.", "The EU and the U.K. agreed."):
+        assert unsupported_names(text, v | {"republicans", "rahman", "aides", "spoke", "cyber"}) == [], text
+    assert unsupported_names("Leaders in Europe met.", {"european", "leaders", "met"}) == []
+    assert unsupported_names("Voters met in West Palm Beach.", {"voters", "met"}) != []     # a real unsupported place is still caught
+
+
+def test_autofix_shortens_a_long_headline_and_drops_unresolved_markers():
+    from newsbot.autofix import shorten_title, autofix_article
+    t = "La Chambre des représentants envisage la destitution du secrétaire à la Défense: un vote est attendu après la pause du Congrès"
+    short = shorten_title(t, 20, 100)
+    assert short and 20 <= len(short) <= 100 and t.startswith(short.rstrip(": ,"))
+    assert shorten_title("x" * 30, 40, 100) is None                      # too short to fix by cutting
+    art = copy.deepcopy(base())
+    art["body_markdown"] = art["body_markdown"].replace("[S1]", "[S9]", 1)
+    qa = run_gates(art, FS, "en", make_cfg(), run_llm_check=False)
+    assert "unresolved_marker" in qa.failures
+    res = autofix_article(art, FS, "en", qa)
+    assert res and "[S9]" not in res[0]["body_markdown"]
+    assert "unresolved_marker" not in run_gates(res[0], FS, "en", make_cfg(), run_llm_check=False).failures

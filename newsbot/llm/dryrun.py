@@ -112,6 +112,8 @@ def _translate(messages) -> dict:
     for k in ("confirmed", "unclear", "disputed"):                     # "translate" the lists too (the engine rejects lists left untranslated)
         a[k] = ["~ " + x for x in a.get(k, [])]
     a["timeline"] = [{**e, "time": "~ " + e.get("time", ""), "text": "~ " + e.get("text", "")} for e in a.get("timeline", [])]
+    a["body_markdown"] = "\n".join(("~ " + re.sub(r"(?<=[.!?])\s+", " ~ ", l.strip())) if l.strip() and not l.startswith("#") else l
+                                   for l in a.get("body_markdown", "").splitlines())       # sentences differ from the lead's, as a translation's do
     return a
 
 

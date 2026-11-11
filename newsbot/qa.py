@@ -24,8 +24,11 @@ from newsbot import learned
 from newsbot.sensitive import detect
 from newsbot.write import SLUG_RE, fact_sheet_payload, validate_article
 
-BANNED = ["as an ai", "as a language model", "language model", "in conclusion", "i cannot", "i can't assist",
-          "lorem ipsum", "placeholder", "tbd", "todo", "insert here", "উপসংহারে", "একটি ভাষা মডেল", "এআই হিসেবে"]
+# Only phrases that betray an AI draft. (Removed after real runs: "todo" is the Spanish word for "all", "placeholder"/"tbd" and
+# "language model" appear in ordinary news about AI; template leftovers such as [TODO] are caught by _PLACEHOLDER below.)
+BANNED = ["as an ai", "as a language model", "in conclusion", "i cannot", "i can't assist",
+          "lorem ipsum", "insert here", "উপসংহারে", "একটি ভাষা মডেল", "এআই হিসেবে"]
+_TBD = re.compile(r"\btbd\b", re.I)
 _PLACEHOLDER = re.compile(r"\{\{.*?\}\}|\[(?:insert|todo|tbd|placeholder|source|link)[^\]]*\]|\bxxx+\b", re.I)
 _HTML = re.compile(r"<\s*/?\s*[a-zA-Z!][^>]*>")
 _MARKER = re.compile(r"\[S(\d+)\]")
@@ -104,6 +107,7 @@ def fact_vocab(fs: FactSheet) -> tuple[set[str], set[str], set[str]]:
             conf |= numbers_in(f.statement)
     for s in fs.sources:
         vocab |= {w.lower() for w in raw_words(s["name"] + " " + s.get("domain", ""))}
+        nums |= numbers_in(s["name"])                          # "France 24", "Channel 4": a name, not a figure
         try:                                      # only year, month, day from the publish date (not clock digits)
             d = parse_ts(s["published_at"])
             nums |= {str(d.year), str(d.month), str(d.day)}
@@ -119,11 +123,57 @@ def _numbers_text(text: str) -> str:
     return strip_markers(text)
 
 
+def lead_numbers(lead: dict | None) -> set[str]:
+    """Figures of the (already checked) lead article, plus the 24-hour form of its 12-hour times: "5 p.m." may be "17:00" for a
+    reader who writes the clock that way (1..11 -> 13..23)."""
+    if not lead:
+        return set()
+    base = numbers_in(_numbers_text(lead["title"] + "\n" + article_text(lead)))
+    return base | {str(int(n) + 12) for n in base if n.isdigit() and 1 <= int(n) <= 11}
+
+
+def _scaled_ok(n: str, allowed: set[str]) -> bool:
+    """A million/billion/trillion figure whose written part is a figure of the facts ("$21 billion" when the fact sheet gives 21
+    and the unit in another spelling): 21000000000 = 21 x 10^9. Thousands are not accepted this way (too easy to confuse)."""
+    from decimal import Decimal, InvalidOperation
+    try:
+        v = Decimal(n)
+    except InvalidOperation:
+        return False
+    if v < 10**6:
+        return False
+    for k in (6, 9, 12):
+        m = v / Decimal(10) ** k
+        if m >= 1:
+            t = str(int(m)) if m == m.to_integral() else str(m.normalize())
+            if t in allowed:
+                return True
+    return False
+
+
+def extra_numbers(found: set[str], allowed: set[str], lead: dict | None = None) -> set[str]:
+    """Figures in `found` that neither the facts (`allowed`) nor, for a translation, the lead article support."""
+    ok = set(allowed) | lead_numbers(lead)
+    return {n for n in found - ok if not _scaled_ok(n, ok)}
+
+
 # Office and role words that are ordinary English, not names of people, places or organisations. A name still has to be
 # in the fact sheet; these only describe a role ("the Senator", "Parliament") and carry no fact of their own.
 ROLE_WORDS = set("""european asian african gregorian islamic christian muslim jewish arab president prime minister senator parliament member members justice king queen section article citizen
 citizens ministry government council committee court police army navy force forces party leader leaders chairman chair
 spokesman spokesperson official officials mayor governor judge""".split())
+# Adjectives of nationality / region / party: ordinary English describing a name, never a name that needs its own fact.
+DEMONYMS = set("""american british english french german russian chinese japanese indian turkish iranian iraqi israeli palestinian syrian
+lebanese saudi emirati egyptian pakistani bangladeshi afghan ukrainian polish italian spanish portuguese dutch swedish norwegian danish
+finnish swiss austrian greek brazilian mexican argentine canadian australian korean vietnamese thai indonesian malaysian nigerian kenyan
+ethiopian african asian european arab latin northern southern eastern western central democratic republican conservative liberal labour
+socialist communist nationalist""".split())
+# Words that start a sentence and are not names even when the next word is capitalised ("With Republicans out of both chambers").
+STARTERS = set("""the a an with without neither nor either both after before during while when where as in on at by for from of to under over between
+among despite although though because since until according however meanwhile several many some most all large small new major recent early
+late first second third last other another each every no not only also but and or if then once following amid across against along around
+beyond inside outside near within upon toward towards per via than that this these those their its his her our your such what which who why how""".split())
+_ABBR = {"uk", "u.k", "eu", "un", "u.n"}
 _HYPHENS = re.compile("[\u2010\u2011\u2012\u2013\u2014\u2212-]")
 
 
@@ -150,16 +200,20 @@ def unsupported_names(text: str, vocab: set[str]) -> list[str]:
                 for w in _HYPHENS.split(tok):
                     if len(w) < 2 or not w[0].isalpha() or not w[0].isupper() or any(c.isdigit() for c in w):
                         continue
-                    if i == 0 and w is tok and not (nxt[:1].isalpha() and nxt[:1].isupper()):
+                    if i == 0 and w is tok and (w.lower() in STARTERS or not (nxt[:1].isalpha() and nxt[:1].isupper())):
                         continue                                      # ordinary sentence-initial word
                     lw = w.lower()
+                    if lw.rstrip(".") in _ABBR or lw in DEMONYMS:
+                        continue                                      # US / UK / EU / UN, "Turkish", "Republican"
+                    if len(lw) >= 5 and any((v.startswith(lw) and len(v) <= len(lw) + 4) or (len(v) >= 5 and lw.startswith(v)) for v in vocab):
+                        continue                                      # Europe / European, Syria / Syrian: the same word in another form
                     if lw in DATE_WORDS or lw in vocab or lw.rstrip("s") in vocab:
                         continue
                     if lw in ROLE_WORDS or lw in lowered or lw.rstrip("s") in lowered:
                         continue
                     if learned.name_ok(w, vocab):
                         continue                                      # a rule learned from an earlier failure (newsbot/learned.py)
-                    if lw == "us" and vocab & {"u.s", "states", "america", "american", "americans"}:
+                    if lw.rstrip(".").replace(".", "") == "us" and vocab & {"u.s", "states", "america", "american", "americans"}:
                         continue                                      # "US" for a fact sheet that says U.S. / United States
                     bad.append(w)
     return sorted(set(bad))
@@ -214,7 +268,7 @@ def offending_terms(a: dict, fs: FactSheet, lead: dict | None = None) -> tuple[l
     nums, vocab, _ = fact_vocab(fs)
     vocab = vocab | lead_vocab(lead)
     all_text = a["title"] + "\n" + article_text(a)
-    return unsupported_names(all_text, vocab), sorted(numbers_in(_numbers_text(all_text)) - nums)
+    return unsupported_names(all_text, vocab), sorted(extra_numbers(numbers_in(_numbers_text(all_text)), nums, lead))
 
 
 def run_gates(a: dict, fs: FactSheet, lang: str, cfg, *, recent: list | None = None, embedder=None,
@@ -239,7 +293,7 @@ def run_gates(a: dict, fs: FactSheet, lang: str, cfg, *, recent: list | None = N
     # structure and size
     lo, hi = L.title_len(q, lang)
     if not lo <= len(a["title"]) <= hi:
-        fail("title_length", length=len(a["title"]))
+        fail("title_length", length=len(a["title"]), lo=lo, hi=hi)
     body = re.sub(r"(?m)^#.*$", "", strip_markers(a["body_markdown"]))
     n_words = L.length_units(body, lang, words(body))            # words; letters for a script without spaces (ja, zh, th)
     if n_words < L.min_words(q, lang):
@@ -277,7 +331,7 @@ def run_gates(a: dict, fs: FactSheet, lang: str, cfg, *, recent: list | None = N
     text = article_text(a)
     nums, vocab, conf_nums = fact_vocab(fs)
     all_text = a["title"] + "\n" + text
-    extra = numbers_in(_numbers_text(all_text)) - nums
+    extra = extra_numbers(numbers_in(_numbers_text(all_text)), nums, lead)
     if extra:
         fail("unsupported_number", count=len(extra))
     names = unsupported_names(all_text, vocab | lead_vocab(lead)) if L.meta(lang)["names"] else []     # German capitalises every noun: no name check
@@ -286,7 +340,7 @@ def run_gates(a: dict, fs: FactSheet, lang: str, cfg, *, recent: list | None = N
     confirmed_facts = [f for f in fs.facts if f.status == "confirmed"]
     if a["confirmed"] and not confirmed_facts:
         fail("confirmed_without_support")
-    elif numbers_in(_numbers_text("\n".join(a["confirmed"]))) - conf_nums:
+    elif extra_numbers(numbers_in(_numbers_text("\n".join(a["confirmed"]))), conf_nums, lead):
         fail("confirmed_unsupported_number")
     if any(f.status == "disputed" for f in fs.facts) and not a["disputed"]:
         fail("disputed_omitted")
@@ -315,7 +369,7 @@ def run_gates(a: dict, fs: FactSheet, lang: str, cfg, *, recent: list | None = N
 
     # boilerplate, html, links
     low = all_text.lower()
-    if any(b in low for b in BANNED + [p.lower() for p in q.banned_phrases]):
+    if any(b in low for b in BANNED + [p.lower() for p in q.banned_phrases]) or _TBD.search(all_text):
         fail("banned_phrase")
     if _PLACEHOLDER.search(all_text):
         fail("placeholder")
@@ -374,7 +428,7 @@ def run_gates(a: dict, fs: FactSheet, lang: str, cfg, *, recent: list | None = N
         r.review.append("low_confidence")
 
     # final LLM pass (only when the cheap gates passed: saves tokens)
-    if not r.failures and run_llm_check:
+    if not r.failures and run_llm_check and lead is None:         # a translation was already checked as the lead (fidelity gate above)
         if llm is None:
             r.review.append("qa_check_not_run")
         else:

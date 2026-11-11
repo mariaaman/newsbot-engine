@@ -17,7 +17,7 @@ from newsbot.qa import _numbers_text, fact_vocab, offending_terms, raw_words, st
 from newsbot.cluster import tokenize
 
 MAX_LOSS = 0.35                    # most of the body (by words) that may be deleted before the draft goes to a human instead
-FIXABLE = {"unsupported_name", "unsupported_number", "confirmed_unsupported_number", "unsupported_claims"}
+FIXABLE = {"unsupported_name", "unsupported_number", "confirmed_unsupported_number", "unsupported_claims", "unresolved_marker", "title_length"}
 
 _SENT = re.compile(r"(?<=[.!?।])\s+")
 _TRAIL_MARKS = re.compile(r"((?:\s*\[S\d+\])+)\s*$")
@@ -119,10 +119,29 @@ def _fix_paragraph(par: str, ctx: _Ctx) -> str:
     return " ".join(keep)
 
 
+_TITLE_CUTS = (": ", " \u2013 ", " \u2014 ", " - ", "; ", ", ")
+
+
+def shorten_title(title: str, lo: int, hi: int) -> str | None:
+    """The headline cut to at most `hi` characters at a natural break (a colon, dash or comma, else a word end), or None when no
+    cut leaves at least `lo` characters. Nothing is added; a dangling connective ("de", "of", "and") is dropped from the end."""
+    t = " ".join(title.split())
+    if len(t) <= hi:
+        return t if len(t) >= lo else None
+    best = max((t.rfind(c, 0, hi + 1) for c in _TITLE_CUTS), default=-1)
+    cut = t[:best] if best >= lo else t[:hi + 1].rsplit(" ", 1)[0]
+    words = cut.rstrip(" ,;:-\u2013\u2014").split(" ")
+    while len(words) > 3 and len(words[-1]) <= 3 and not words[-1][:1].isdigit():
+        words.pop()
+    out = " ".join(words).rstrip(" ,;:-\u2013\u2014")
+    return out if lo <= len(out) <= hi else None
+
+
 def autofix_article(art: dict, fs, lang: str, qa, lead: dict | None = None) -> tuple[dict, int, int] | None:
     """(edited copy, sentences corrected, sentences removed) or None when nothing can or should be done."""
     if not set(qa.failures) & FIXABLE:
         return None
+    extra = 0
     nums, _vocab, conf = fact_vocab(fs)
     names, numbers = offending_terms(art, fs, lead)
     # act only on what the gates actually rejected: a language without a name check (es, fr...) must not lose sentences over "names"
@@ -133,6 +152,23 @@ def autofix_article(art: dict, fs, lang: str, qa, lead: dict | None = None) -> t
     claims = claims if "unsupported_claims" in qa.failures else []
     ctx = _Ctx(fs, names, set(numbers), set(), claims)
     out = copy.deepcopy(art)
+    if "title_length" in qa.failures:                      # too long a headline: cut at a natural break, never add words
+        d = qa.details.get("title_length", {})
+        new = shorten_title(art["title"], d.get("lo", 15), d.get("hi", 100)) if d.get("hi") else None
+        if new and new != art["title"]:
+            out["title"], extra = new, extra + 1
+    if "unresolved_marker" in qa.failures:                 # a citation [S#] that names no listed source: drop the marker, keep the sentence
+        listed = {x["id"] for x in art["sources"]}
+
+        def _drop(text: str) -> str:
+            return re.sub(r"[ \t]*\[(S\d+)\]", lambda m: m.group(0) if m.group(1) in listed else "", text)
+        for key in ("body_markdown", "summary"):
+            if _drop(out[key]) != out[key]:
+                out[key], extra = _drop(out[key]), extra + 1
+        for key in ("confirmed", "unclear", "disputed"):
+            out[key] = [_drop(x) for x in out[key]]
+        out["timeline"] = [{**e, "text": _drop(e["text"])} for e in out["timeline"]]
+        art = {**art, **{k: out[k] for k in ("body_markdown", "summary", "confirmed", "unclear", "disputed", "timeline")}}
 
     body_before = len(" ".join(art["body_markdown"].split()).split())
     paras = [p for p in re.split(r"\n\s*\n", out["body_markdown"]) if p.strip()]
@@ -172,6 +208,6 @@ def autofix_article(art: dict, fs, lang: str, qa, lead: dict | None = None) -> t
         if r is not None:
             tl.append({**e, "text": r})
     out["timeline"] = tl
-    if ctx.replaced == 0 and ctx.dropped == 0:
+    if ctx.replaced == 0 and ctx.dropped == 0 and extra == 0:
         return None
-    return out, ctx.replaced, ctx.dropped
+    return out, ctx.replaced + extra, ctx.dropped

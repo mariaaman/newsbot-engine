@@ -36,3 +36,14 @@ Rule of thumb: a fix is good when it removes a failure class WITHOUT an LLM call
 - The model classifies; code validates; nothing the model says is executed or written into articles.
 - `learning` files are data: wrong or unwanted rules can be deleted by hand (edit `rules.json`).
 - Switch the whole diagnose step off: `qa.diagnose: false` in `config/newsbot.yaml`.
+
+
+## Fixed from real runs (v19)
+Found by reading state/learning/review.jsonl and stats.json after four days:
+- "todo" (Spanish for "all"), "placeholder", "tbd", "language model" were banned words: removed (real AI boilerplate remains banned).
+- "France 24" made 24 an unsupported figure: digits inside source names are allowed.
+- "$21 billion" vs a fact sheet that gives 21: a million/billion/trillion figure is accepted when its written part is a fact figure.
+- 5 p.m. in the English lead written as 17:00 in a translation: the 24-hour form of the lead's 12-hour times is allowed.
+- Names: sentence starters ("With", "Neither", "Large"), nationality and party adjectives (Turkish, Democratic), Europe/European, EU/UK/UN, "U.S." are not names.
+- Translations are no longer sent to the model fact-check (it compared French/Hindi text with the English fact sheet and rejected correct claims); the fidelity gate already guards them. A body sentence left in English now counts as untranslated and is retried once.
+- Headlines over the limit are cut at a natural break by the engine; the translation prompt states the length. Citation markers [S#] that name no listed source are dropped by autofix.

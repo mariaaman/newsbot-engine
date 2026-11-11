@@ -49,7 +49,9 @@ def build_messages(lead: dict, lang: str, cfg, brain) -> list[dict]:
         system = load_prompt(brain, "translate")
     except FileNotFoundError:
         system = BUILTIN
-    system += (f"\n\nTarget language: {lang} ({LANG_NAMES.get(lang, lang)}). Audience guidance: {L.local_angle(cfg.write, lang)} "
+    lo, hi = L.title_len(cfg.qa, lang)
+    system += (f"\n\nTitle length: {lo} to {max(lo, hi - 15)} characters (hard limit {hi}); shorten the headline instead of copying a long one."
+               f"\n\nTarget language: {lang} ({LANG_NAMES.get(lang, lang)}). Audience guidance: {L.local_angle(cfg.write, lang)} "
                f"Minimum length of body_markdown: {L.min_words(cfg.qa, lang)} {L.unit_name(lang)}"
                f"{' (letters, no spaces)' if L.meta(lang)['spaceless'] else ''}.")
     payload = {k: lead[k] for k in _KEEP}
@@ -69,10 +71,19 @@ def _entries(a: dict) -> list[tuple[str, str]]:
     return out
 
 
+def _sentences(a: dict) -> set[str]:
+    from newsbot.qa import strip_markers
+    return {s.strip() for s in re.split(r"(?<=[.!?\u0964])\s+", strip_markers(a["body_markdown"]).replace("\n", " ")) if len(s.split()) >= 6}
+
+
 def untranslated(lead: dict, art: dict) -> list[str]:
-    """Lists the model handed back still in the lead's words (a recurring slip: the body is translated, the timeline and fact lists are not)."""
+    """Fields the model handed back still in the lead's words (a recurring slip: the body is translated, the timeline and fact lists are
+    not; or one body sentence is left in English). "body" = a whole sentence of six or more words copied unchanged."""
     mine = {t.strip() for _k, t in _entries(art) if len(t.strip()) >= 8}
-    return sorted({k for k, t in _entries(lead) if len(t.strip()) >= 8 and t.strip() in mine})
+    out = {k for k, t in _entries(lead) if len(t.strip()) >= 8 and t.strip() in mine}
+    if _sentences(lead) & _sentences(art):
+        out.add("body")
+    return sorted(out)
 
 
 def translate_article(llm, brain, cfg, fs, lang: str, lead: dict) -> tuple[dict, int]:
@@ -97,9 +108,9 @@ def translate_article(llm, brain, cfg, fs, lang: str, lead: dict) -> tuple[dict,
 
 def fidelity(lead: dict, art: dict) -> list[str]:
     """Failure codes when `art` is not a faithful translation of `lead` (empty = faithful)."""
-    from newsbot.qa import _MARKER, _numbers_text, article_text
+    from newsbot.qa import _MARKER, _numbers_text, article_text, lead_numbers
     out = []
-    ln = numbers_in(_numbers_text(lead["title"] + "\n" + article_text(lead)))
+    ln = lead_numbers(lead)
     an = numbers_in(_numbers_text(art["title"] + "\n" + article_text(art)))
     if an - ln:
         out.append("translation_added_number")

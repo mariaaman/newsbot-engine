@@ -1,4 +1,5 @@
 import copy
+import re
 
 from newsbot import translate as T
 from newsbot.articles import produce_articles
@@ -45,6 +46,8 @@ def _tr(a):
     for k in ("confirmed", "unclear", "disputed"):
         b[k] = ["~ " + x for x in b[k]]
     b["timeline"] = [{"time": "~ " + e["time"], "text": "~ " + e["text"]} for e in b["timeline"]]
+    b["body_markdown"] = "\n".join(("~ " + re.sub(r"(?<=[.!?])\s+", " ~ ", l.strip())) if l.strip() and not l.startswith("#") else l
+                                   for l in b["body_markdown"].splitlines())
     return b
 
 
@@ -96,7 +99,7 @@ def test_untranslated_lists_are_detected_and_retried_once():
     lead = _lead()
     lead["confirmed"] = ["The suspect was taken into custody near the White House."]; lead["unclear"] = []; lead["disputed"] = []
     lead["timeline"] = [{"time": "Thursday night", "text": "The suspect was taken into custody [S1]"}]
-    bad = copy.deepcopy(lead); bad["title"] = "Titre"; bad["body_markdown"] = lead["body_markdown"]
+    bad = copy.deepcopy(lead); bad["title"] = "Titre"; bad["body_markdown"] = _tr(lead)["body_markdown"]
     assert T.untranslated(lead, bad) == ["confirmed", "timeline"] and "translation_untranslated" in T.fidelity(lead, bad)
     good = copy.deepcopy(bad); good["confirmed"] = ["Le suspect a ete arrete pres de la Maison Blanche."]
     good["timeline"] = [{"time": "Jeudi soir", "text": "Le suspect a ete arrete [S1]"}]
