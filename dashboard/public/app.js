@@ -1,7 +1,7 @@
 // NewsBot Control: the whole dashboard UI. Talks only to this Worker's /api/*; secrets are write-only; the brain repo on GitHub is the database.
 import {
   h, $, flat, api, guard, toast, errorCard, ApiError, LANGS, DEFAULT_LANG, loadLangs, REQUIRED_SECRETS, RAW_FILES, WORKFLOW_LABELS, MSG,
-  fmtTime, ago, num, runChip, titleOf, pendingOf, parsePending, reasonLabel,
+  fmtTime, ago, num, runChip, titleOf, rejectedOf, parseRejected, reasonLabel,
 } from "./lib.js";
 
 const view = $("view");
@@ -13,7 +13,7 @@ const safeUrl = (u) => (/^https:\/\//.test(u || "") ? u : null);
 const NEWS = "config/newsbot.yaml", LLM = "config/llm.yaml";
 
 // ---------- navigation ----------
-const TABS = [["", "🏠", "হোম"], ["drafts", "📝", "খসড়া"], ["articles", "📰", "আর্টিকেল"], ["settings", "⚙️", "সেটিংস"], ["keys", "🔑", "কী"], ["visitors", "👥", "ভিজিটর"], ["runs", "▶️", "রান"], ["more", "☰", "আরও"]];
+const TABS = [["", "🏠", "হোম"], ["rejected", "🗄", "বাতিল"], ["articles", "📰", "আর্টিকেল"], ["settings", "⚙️", "সেটিংস"], ["keys", "🔑", "কী"], ["visitors", "👥", "ভিজিটর"], ["runs", "▶️", "রান"], ["more", "☰", "আরও"]];
 const tabEls = TABS.map(([id, icon, label]) => h("a", { href: "#/" + id, class: "tab" }, h("b", {}, icon), label));
 nav.replaceChildren(...tabEls);
 const setNav = (name) => tabEls.forEach((el, i) => { el.className = "tab" + (TABS[i][0] === name ? " on" : ""); });
@@ -23,7 +23,7 @@ async function route() {
   const my = ++token;
   const parts = (location.hash || "#/").replace(/^#\/?/, "").split("/").map((p) => { try { return decodeURIComponent(p); } catch { return p; } });
   const name = Object.prototype.hasOwnProperty.call(SCREENS, parts[0]) ? parts[0] : "";
-  setNav(name === "draft" ? "drafts" : name === "article" ? "articles" : name === "llm" ? "keys" : name);
+  setNav(name === "rejecteditem" ? "rejected" : name === "article" ? "articles" : name === "llm" ? "keys" : name);
   view.replaceChildren(h("p", { class: "muted" }, "লোড হচ্ছে…"));
   try {
     await loadLangs();
@@ -50,7 +50,7 @@ async function home() {
   const o = await api("/api/overview");
   const sum = (m) => Object.values(m || {}).reduce((a, b) => a + b, 0);
   const perLang = (m) => LANGS.map(([c]) => `${c} ${(m || {})[c] || 0}`).join(" · ");
-  const published = sum(o.counts.published), pending = sum(o.counts.pending);
+  const published = sum(o.counts.published), rejected = sum(o.counts.rejected);
   const out = [];
 
   // site
@@ -63,20 +63,15 @@ async function home() {
         : chk.status === 0 ? h("span", { class: "chip bad" }, "সাইটে পৌঁছানো যাচ্ছে না") : h("span", { class: "chip warn" }, `সাইট ${chk.status} দিচ্ছে`),
       o.site.deployed ? h("span", { class: "chip" }, `শেষ ডিপ্লয় ${ago(o.site.deployed)}`) : h("span", { class: "chip warn" }, "এখনো ডিপ্লয় হয়নি"))));
 
-  // mode
-  const modeBtns = ["review", "auto"].map((m) => {
-    const b = h("button", { class: "btn small" + (o.mode === m ? " primary" : ""), disabled: o.mode === m, onclick: () => guard(b, () => setMode(m)) }, m);
-    return b;
-  });
+  // how publishing works
   out.push(h("div", { class: "card" },
-    h("div", { class: "row between" }, h("h2", {}, "প্রকাশের মোড"), h("span", { class: "chip " + (o.mode === "auto" ? "warn" : "ok") }, o.mode)),
-    h("p", { class: "muted small" }, "review: আপনি দেখে অনুমোদন দেন। auto: নিজে প্রকাশ হয় (সংবেদনশীল খসড়া তবুও আটকে থাকে)।"),
-    h("div", { class: "row" }, modeBtns, h("span", { class: "chip " + (o.ads ? "ok" : "") }, o.ads ? "বিজ্ঞাপন চালু" : "বিজ্ঞাপন বন্ধ"))));
+    h("div", { class: "row between" }, h("h2", {}, "প্রকাশ"), h("span", { class: "chip " + (o.ads ? "ok" : "") }, o.ads ? "বিজ্ঞাপন চালু" : "বিজ্ঞাপন বন্ধ")),
+    h("p", { class: "muted small" }, "কোনো লেখা অনুমোদনের অপেক্ষায় থাকে না: মান-যাচাই পাস করলে নিজে প্রকাশ হয়; ঠিক করা না গেলে বাতিল হয়ে “বাতিল” ট্যাবে জমা থাকে, যাতে পরের আপগ্রেডে কাজে লাগে।")));
 
   // counts
   out.push(h("div", { class: "row" },
     h("a", { href: "#/articles", class: "card item grow" }, h("div", { class: "stat" }, `প্রকাশিত ${published}`), h("div", { class: "muted small" }, perLang(o.counts.published))),
-    h("a", { href: "#/drafts", class: "card item grow" }, h("div", { class: "stat" }, `খসড়া ${pending}`), h("div", { class: "muted small" }, perLang(o.counts.pending)))));
+    h("a", { href: "#/rejected", class: "card item grow" }, h("div", { class: "stat" }, `বাতিল ${rejected}`), h("div", { class: "muted small" }, perLang(o.counts.rejected)))));
 
   // run now
   const runBtn = h("button", { class: "btn primary", onclick: () => guard(runBtn, async () => { await api("/api/dispatch", { workflow: "hourly" }); toast("▶️ রান শুরু হয়েছে। রান ট্যাবে দেখুন।", "ok"); }) }, "এখনই চালান");
@@ -109,105 +104,96 @@ async function home() {
   return out;
 }
 
-async function setMode(mode) {
-  if (mode === "auto" && !confirm("auto মোডে সংবেদনশীল ছাড়া বাকি লেখা আপনার অনুমোদন ছাড়াই প্রকাশ হবে। চালু করবেন?")) return;
-  await api("/api/settings", { changes: [{ file: NEWS, kind: "field", path: ["publish", "mode"], value: mode }] });
-  toast(`✅ মোড এখন ${mode}`, "ok");
-  await route();
-}
-
 // ---------- lists ----------
 const langTabs = () => h("div", { class: "row" }, LANGS.map(([code, label]) =>
   h("button", { class: "btn small" + (S.lang === code ? " primary" : ""), onclick: () => { S.lang = code; S.offset = 0; S.q = ""; route(); } }, label)));
 
 async function listScreen(kind) {
   const d = await api(`/api/${kind}?lang=${enc(S.lang)}&offset=${S.offset}&q=${enc(S.q)}`);
-  const isDraft = kind === "drafts";
+  const isRej = kind === "rejected";
   const q = h("input", { type: "search", value: S.q, placeholder: "নামের অংশ লিখে খুঁজুন", maxLength: 60 });
   const form = h("form", { class: "row", onsubmit: (ev) => { ev.preventDefault(); S.q = q.value.trim(); S.offset = 0; route(); } },
     h("div", { class: "grow" }, q), h("button", { class: "btn", type: "submit" }, "খুঁজুন"));
   const items = d.items.map((it) => {
-    const head = it.head || "", p = parsePending(pendingOf(head));
-    return h("a", { class: "card item", href: `#/${isDraft ? "draft" : "article"}/${enc(S.lang)}/${enc(it.slug)}` },
+    const head = it.head || "", p = parseRejected(rejectedOf(head));
+    return h("a", { class: "card item", href: `#/${isRej ? "rejecteditem" : "article"}/${enc(S.lang)}/${enc(it.slug)}` },
       h("div", { class: "t" }, titleOf(head)),
       h("div", {},
         p.failures.length ? h("span", { class: "chip bad" }, `⛔ মান-যাচাই ${p.failures.length}`) : null,
         p.review.map((r) => h("span", { class: "chip warn" }, reasonLabel(r))),
-        !isDraft && /^draft:\s*true\s*$/m.test(head) ? h("span", { class: "chip warn" }, "সাইটে লুকানো") : null,
+        !isRej && /^draft:\s*true\s*$/m.test(head) ? h("span", { class: "chip warn" }, "সাইটে লুকানো") : null,
         h("span", { class: "muted small mono" }, it.slug)));
   });
   const prev = h("button", { class: "btn small", disabled: S.offset <= 0, onclick: () => { S.offset = Math.max(0, S.offset - PAGE); route(); } }, "← আগের");
   const next = h("button", { class: "btn small", disabled: S.offset + PAGE >= d.matched, onclick: () => { S.offset += PAGE; route(); } }, "পরের →");
   return [
-    h("h1", {}, isDraft ? "খসড়া" : "প্রকাশিত আর্টিকেল"), langTabs(),
+    h("h1", {}, isRej ? "বাতিল লেখা" : "প্রকাশিত আর্টিকেল"), isRej ? h("p", { class: "muted small" }, "মান-যাচাইয়ে ব্যর্থ হয়ে বাতিল হওয়া লেখা। শুধু দেখার জন্য; পরের আপগ্রেডে এগুলো থেকে সিস্টেম শেখে।") : null, langTabs(),
     h("p", { class: "muted small" }, `মোট ${d.total} · মিলেছে ${d.matched}${S.q ? ` · খোঁজা: ${S.q}` : ""}`), form,
-    items.length ? items : h("div", { class: "card muted" }, isDraft ? "কোনো খসড়া নেই। 🎉" : "এই ভাষায় কোনো প্রকাশিত আর্টিকেল নেই।"),
+    items.length ? items : h("div", { class: "card muted" }, isRej ? "কোনো বাতিল লেখা নেই। 🎉" : "এই ভাষায় কোনো প্রকাশিত আর্টিকেল নেই।"),
     d.matched > PAGE ? h("div", { class: "row between" }, prev, next) : null,
   ];
 }
-const drafts = () => listScreen("drafts");
+const rejected = () => listScreen("rejected");
 const articles = () => listScreen("articles");
 
-// ---------- one draft / one live article ----------
+// ---------- one live article (editable) / one cancelled draft (read only) ----------
 async function editor(kind, [lang, slug]) {
-  const isDraft = kind === "draft";
   S.lang = lang || S.lang;
   const d = await api(`/api/${kind}?lang=${enc(lang)}&slug=${enc(slug)}`);
-  const pend = parsePending(d.pending);
   const title = h("input", { type: "text", value: d.title, maxLength: 300 });
   const summary = h("textarea", { rows: 3, value: d.summary });
   const body = h("textarea", { class: "edit-body", rows: 16, value: d.body });
   const edits = () => ({ title: title.value, summary: summary.value, body: body.value });
-  const ack = isDraft && pend.failures.length ? h("input", { type: "checkbox" }) : null;
   const pv = h("div", { class: "preview" });
   pv.innerHTML = d.html;                                       // the Worker escapes the article text before building this
 
   const act = async (action, extra = {}) => api(`/api/${kind}`, { action, lang, slug, version: d.version, ...extra });
   const after = (res, backHash) => {
-    toast(MSG[res.key] || "✅ হয়েছে", res.key === "gate" || res.key === "stale" ? "bad" : "ok");
-    if (res.key === "gate") return null;
+    toast(MSG[res.key] || "✅ হয়েছে", res.key === "stale" ? "bad" : "ok");
     if (res.key === "stale") return route();
     return backHash ? goto(backHash) : route();
   };
 
   const buttons = [];
-  if (isDraft) {
-    const save = h("button", { class: "btn", onclick: () => guard(save, async () => after(await act("save", { edits: edits() })), null) }, "সংরক্ষণ");
-    const approve = h("button", { class: "btn primary", onclick: () => guard(approve, async () => {
-      if (pend.review.length && !confirm("এটি সংবেদনশীল হিসেবে চিহ্নিত। পড়ে দেখেছেন, প্রকাশ করবেন?")) return;
-      after(await act("approve", { edits: edits(), ack: ack ? ack.checked : false }), "#/drafts");
-    }) }, "অনুমোদন ও প্রকাশ");
-    const reject = h("button", { class: "btn danger", onclick: () => guard(reject, async () => {
-      if (!confirm("খসড়াটি মুছে ফেলবেন? এটা ফেরানো যাবে না।")) return;
-      after(await api("/api/draft", { action: "reject", lang, slug }), "#/drafts");
-    }) }, "বাতিল");
-    buttons.push(save, approve, reject);
-  } else {
-    const save = h("button", { class: "btn primary", onclick: () => guard(save, async () => {
-      if (!confirm("সংরক্ষণ করলে সাইট আবার ডিপ্লয় হবে। এগিয়ে যাবেন?")) return;
-      after(await act("save", { edits: edits() }));
-    }) }, "সংরক্ষণ ও প্রকাশ");
-    const vis = h("button", { class: "btn", onclick: () => guard(vis, async () => {
-      if (!d.hidden && !confirm("আর্টিকেলটি সাইট থেকে লুকাবেন? (ফাইল মুছবে না)")) return;
-      after(await act(d.hidden ? "show" : "hide"));
-    }) }, d.hidden ? "আবার দেখান" : "সাইট থেকে লুকান");
-    buttons.push(save, vis);
-  }
+  const save = h("button", { class: "btn primary", onclick: () => guard(save, async () => {
+    if (!confirm("সংরক্ষণ করলে সাইট আবার ডিপ্লয় হবে। এগিয়ে যাবেন?")) return;
+    after(await act("save", { edits: edits() }));
+  }) }, "সংরক্ষণ ও প্রকাশ");
+  const vis = h("button", { class: "btn", onclick: () => guard(vis, async () => {
+    if (!d.hidden && !confirm("আর্টিকেলটি সাইট থেকে লুকাবেন? (ফাইল মুছবে না)")) return;
+    after(await act(d.hidden ? "show" : "hide"));
+  }) }, d.hidden ? "আবার দেখান" : "সাইট থেকে লুকান");
+  buttons.push(save, vis);
 
   return [
-    h("a", { href: isDraft ? "#/drafts" : "#/articles" }, isDraft ? "← খসড়ার তালিকা" : "← আর্টিকেলের তালিকা"),
+    h("a", { href: "#/articles" }, "← আর্টিকেলের তালিকা"),
     h("h1", {}, d.title || slug),
-    h("div", {}, h("span", { class: "chip" }, lang), d.hidden ? h("span", { class: "chip warn" }, "সাইটে লুকানো") : null,
-      pend.review.map((r) => h("span", { class: "chip warn" }, reasonLabel(r))), pend.failures.map((f) => h("span", { class: "chip bad" }, "⛔ " + f))),
-    pend.failures.length ? h("div", { class: "card warn" }, "মান-যাচাইয়ে আটকেছে। ঠিক করে নিন, নয়তো নিজে দেখে নিচের টিক দিয়ে প্রকাশ করুন।") : null,
+    h("div", {}, h("span", { class: "chip" }, lang), d.hidden ? h("span", { class: "chip warn" }, "সাইটে লুকানো") : null),
     h("div", { class: "card" }, lbl("শিরোনাম"), title, lbl("সারাংশ"), summary, lbl("লেখা (Markdown)"), body,
-      ack ? h("label", { class: "check" }, ack, h("span", {}, "আমি নিজে যাচাই করেছি; মান-যাচাইয়ে ব্যর্থ হলেও প্রকাশ করুন")) : null,
       h("div", { class: "row" }, buttons)),
     h("div", { class: "card" }, h("h2", {}, "প্রিভিউ"), h("p", { class: "muted small" }, "সংরক্ষিত লেখার প্রিভিউ। সম্পাদনার পর সংরক্ষণ দিলে হালনাগাদ হবে।"), pv),
     h("details", { class: "card alt" }, h("summary", {}, "ফ্রন্ট-ম্যাটার (শুধু দেখার জন্য)"), h("pre", {}, d.front || "")),
   ];
 }
-const draftScreen = (p) => editor("draft", p);
+
+async function rejectedItem([lang, slug]) {
+  S.lang = lang || S.lang;
+  const d = await api(`/api/rejected-item?lang=${enc(lang)}&slug=${enc(slug)}`);
+  const r = parseRejected(d.rejected);
+  const pv = h("div", { class: "preview" });
+  pv.innerHTML = d.html;                                       // the Worker escapes the article text before building this
+  return [
+    h("a", { href: "#/rejected" }, "← বাতিল তালিকা"),
+    h("h1", {}, d.title || slug),
+    h("div", {}, h("span", { class: "chip" }, lang), r.failures.map((f) => h("span", { class: "chip bad" }, "⛔ " + f)),
+      r.review.map((x) => h("span", { class: "chip warn" }, reasonLabel(x)))),
+    r.names.length || r.numbers.length ? h("div", { class: "card" }, h("h2", {}, "যে নাম/সংখ্যা যাচাইয়ে আটকেছে"),
+      r.names.length ? h("p", {}, "নাম: " + r.names.join(", ")) : null, r.numbers.length ? h("p", {}, "সংখ্যা: " + r.numbers.join(", ")) : null) : null,
+    h("div", { class: "card" }, h("h2", {}, "সারাংশ"), h("p", {}, d.summary || "")),
+    h("div", { class: "card" }, h("h2", {}, "লেখা"), pv),
+    h("details", { class: "card alt" }, h("summary", {}, "ফ্রন্ট-ম্যাটার"), h("pre", {}, d.front || "")),
+  ];
+}
 const articleScreen = (p) => editor("article", p);
 
 // ---------- settings ----------
@@ -553,9 +539,8 @@ async function llm() {
 // ---------- runs ----------
 async function runs() {
   const [r, dec] = await Promise.all([api("/api/runs"), api("/api/decisions")]);
-  const mode = select([["", "(ডিফল্ট মোড)"], "review", "auto", "dry-run"], "");
+  const mode = select([["", "(স্বাভাবিক: প্রকাশ)"], "dry-run"], "");
   const hourly = h("button", { class: "btn primary", onclick: () => guard(hourly, async () => {
-    if (mode.value === "auto" && !confirm("auto মোডে এই রান নিজে প্রকাশ করবে। চালাবেন?")) return;
     await api("/api/dispatch", { workflow: "hourly", ...(mode.value ? { mode: mode.value } : {}) });
     toast("▶️ hourly রান শুরু হয়েছে", "ok");
   }) }, "hourly রান চালান");
@@ -603,19 +588,7 @@ async function visitors([days]) {
 }
 
 async function more() {
-  const [p, sess, au] = await Promise.all([api("/api/prs"), api("/api/session"), api("/api/audit")]);
-  const prs = p.prs.map((x) => {
-    const act = (action, text, cls) => {
-      const b = h("button", { class: "btn small " + cls, onclick: () => guard(b, async () => {
-        if (!confirm(`PR #${x.number} ${text}?`)) return;
-        await api("/api/pr", { number: x.number, action }); toast("✅ হয়েছে", "ok"); await route();
-      }) }, text);
-      return b;
-    };
-    return h("div", { class: "list-line" }, h("div", {}, `#${x.number} ${x.title}`), h("div", { class: "muted small" }, `${x.user || ""} · ${ago(x.created)}`, safeUrl(x.url) ? [" · ", h("a", { href: x.url, target: "_blank", rel: "noopener noreferrer" }, "দেখুন")] : null),
-      h("div", { class: "row" }, act("merge", "মার্জ", "primary"), act("close", "বন্ধ", "danger")));
-  });
-
+  const [sess, au] = await Promise.all([api("/api/session"), api("/api/audit")]);
   const totpBox = h("div", { class: "stack" });
   const done = (msg) => { toast(msg, "ok"); setTimeout(() => { location.href = "/"; }, 900); };
   const showOn = () => {
@@ -646,13 +619,12 @@ async function more() {
   }) }, "সব ডিভাইস থেকে লগআউট");
 
   return [h("h1", {}, "আরও"),
-    h("div", { class: "card" }, h("h2", {}, "খোলা PR"), prs.length ? prs : h("p", { class: "muted" }, "কোনো খোলা PR নেই।")),
     h("div", { class: "card" }, h("h2", {}, "২-ধাপ লগইন"), totpBox),
     h("div", { class: "card" }, h("h2", {}, "লগআউট"), h("div", { class: "row" }, logout, logoutAll)),
     h("div", { class: "card" }, h("h2", {}, "কার্যকলাপের লগ"), h("p", { class: "muted small" }, "শুধু নাম ও সময়, কোনো গোপন মান নয়।"),
       au.items.length ? au.items.slice(0, 40).map((x) => h("div", { class: "list-line" }, h("strong", {}, x.action), x.detail ? ` — ${x.detail}` : "", h("div", { class: "muted small" }, `${fmtTime(x.t)} · ${x.ip}`))) : h("p", { class: "muted" }, "কিছু নেই।"))];
 }
 
-const SCREENS = { "": home, drafts, articles, settings, keys, llm, visitors, runs, more, draft: draftScreen, article: articleScreen };
+const SCREENS = { "": home, rejected, articles, settings, keys, llm, visitors, runs, more, rejecteditem: rejectedItem, article: articleScreen };
 window.addEventListener("hashchange", () => route());
 route();

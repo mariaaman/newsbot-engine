@@ -1,7 +1,6 @@
-// Drafts (pending/) and live articles (content/): list, open, edit, approve, reject, hide from the site.
-import { act, draftRef, applyEdits, split, readField, commit, deploy, listDir, getFile, heads, findDraft } from "./github.js";
+// Cancelled drafts (rejected/, read only) and live articles (content/): list, open, edit, hide from the site.
+import { applyEdits, split, readField, commit, deploy, listDir, getFile, heads, preview } from "./github.js";
 import { HttpError, must, isObj, SLUG, LANG } from "./util.js";
-import { preview } from "../../worker/index.js";
 
 const PAGE = 15;
 
@@ -22,8 +21,8 @@ export async function list(env, dir, lang, offset = 0, q = "") {
 function describe(md) {
   const p = split(md);
   if (!p) throw new HttpError(422, "this file has no front matter");
-  const pend = (p.fm + "\n").match(/^pending:[^\n]*\n(?:[ \t]+[^\n]*\n)*/m);
-  return { title: readField(p.fm, "title"), summary: readField(p.fm, "summary"), body: p.body.trim(), front: p.fm, pending: pend ? pend[0].replace(/^pending:\n/, "").trimEnd() : "",
+  const pend = (p.fm + "\n").match(/^rejected:[^\n]*\n(?:[ \t]+[^\n]*\n)*/m);
+  return { title: readField(p.fm, "title"), summary: readField(p.fm, "summary"), body: p.body.trim(), front: p.fm, rejected: pend ? pend[0].replace(/^rejected:\n/, "").trimEnd() : "",
     hidden: /^draft:\s*true\s*$/m.test(p.fm), html: preview(p.body) };
 }
 
@@ -40,16 +39,6 @@ const editsOf = (e) => {
   must(title && summary && body.trim() && title.length <= 300 && summary.length <= 1000 && body.length <= 80000, 400, "title, summary and text are all required (title up to 300, summary up to 1000 characters)");
   return { title, summary, body };
 };
-
-/** action: save | approve | reject  (drafts) */
-export async function draftAction(env, body) {
-  checkLang(body.lang); checkSlug(body.slug);
-  const ref = await draftRef(body.slug);
-  const kind = { save: "s", approve: "a", reject: "r" }[body.action];
-  must(kind, 400, "unknown action");
-  const res = await act(env, kind, body.lang, ref, { edits: kind === "r" ? null : editsOf(body.edits), allowFailures: body.ack === true, version: body.version || null });
-  return res;
-}
 
 /** action: save | hide | show  (live articles; every change redeploys the site) */
 export async function articleAction(env, body) {
@@ -77,4 +66,3 @@ export function setDraft(md, hidden) {
   return "---\n" + lines.join("\n") + "\n---\n" + p.body;
 }
 
-export { findDraft };

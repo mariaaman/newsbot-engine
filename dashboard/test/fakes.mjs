@@ -20,7 +20,7 @@ const DIR = new URL("../../brain-template/config/", import.meta.url);
 export const NEWS = fs.readFileSync(new URL("newsbot.yaml", DIR), "utf8").replace(/base_url:.*/, "base_url: https://news-site.pages.dev");
 export const LLM = fs.readFileSync(new URL("llm.yaml", DIR), "utf8");
 
-export const draft = (title, { fail = false, extra = "" } = {}) => `---\ntitle: ${title}\nsummary: A summary.\nslug: s\nlang: en\ndate: 2026-10-25T10:00:00+00:00\nai_assisted: true\npending:\n  failures:${fail ? "\n  - unsupported_name" : " []"}\n  review:\n  - sensitive:death${extra}\n---\n## Body\nSome text [S1].\n`;
+export const draft = (title, { fail = false, extra = "" } = {}) => `---\ntitle: ${title}\nsummary: A summary.\nslug: s\nlang: en\ndate: 2026-10-25T10:00:00+00:00\nai_assisted: true\nrejected:\n  failures:${fail ? "\n  - unsupported_name" : " []"}\n  review:\n  - sensitive:death\n  offending:\n    names:\n    - Zorblax\n    numbers: []\n${extra}---\n## Body\n\nDraft body.\n`;
 export const live = (title) => `---\ntitle: ${title}\nsummary: Live summary.\nlang: en\ndate: 2026-10-24T10:00:00+00:00\nlastmod: 2026-10-24T10:00:00+00:00\n---\nLive body.\n`;
 
 export function fakeWorld(opts = {}) {
@@ -28,7 +28,7 @@ export function fakeWorld(opts = {}) {
   const w = {
     files: { "config/newsbot.yaml": NEWS, "config/llm.yaml": LLM, "state/usage.json": JSON.stringify({ day: "2026-10-25", counters: { "cf_phone1/@cf/openai/gpt-oss-120b": { requests: 7, tokens: 41000, neurons: 2500, failures: 1 }, "cf_phone1/@cf/openai/gpt-oss-20b": { requests: 3, tokens: 9000, neurons: 500 } }, errors: { cf_phone1: { reason: "status_429", at: "2026-10-25T08:00:00Z" } } }),
       "state/cooldowns.json": "{}", "state/deployed.json": JSON.stringify({ deployed_at: "2026-10-25T09:00:00+00:00" }), "state/decisions.jsonl": '{"action":"skip","story_id":"st-1","reason":"low score","ts":"2026-10-25T09:00:00+00:00"}\n',
-      "pending/en/dead-actor.md": draft("Actor dies"), "pending/en/bad-gate.md": draft("Gate failed", { fail: true }), "pending/bn/one.md": draft("এক"), "content/en/live-one.md": live("Live one"), ...(opts.files || {}) },
+      "rejected/en/dead-actor.md": draft("Actor dies"), "rejected/en/bad-gate.md": draft("Gate failed", { fail: true }), "rejected/bn/one.md": draft("এক"), "content/en/live-one.md": live("Live one"), ...(opts.files || {}) },
     versions: {}, calls: [], commits: [], dispatches: [], secrets: {}, vars: { PAGES_PROJECT: "newsite" }, keyPair: kp, tg: [], providerStatus: { telegram: 200, github: 200 }, cf: {}, ...opts.world,
   };
   let v = 1;
@@ -106,9 +106,6 @@ export function fakeWorld(opts = {}) {
     if (p.endsWith("/actions/variables") && m === "GET") return J(200, { variables: Object.entries(w.vars).map(([name, value]) => ({ name, value, updated_at: "2026-10-20T00:00:00Z" })) });
     if ((r = p.match(/\/actions\/variables\/([A-Z0-9_]+)$/)) && m === "PATCH") { if (!(r[1] in w.vars)) return J(404); w.vars[r[1]] = body.value; return J(204); }
     if (p.endsWith("/actions/variables") && m === "POST") { w.vars[body.name] = body.value; return J(201); }
-    if (p.endsWith("/pulls") && m === "GET") return J(200, [{ number: 7, title: "New article", html_url: "https://github.com/x/pull/7", created_at: "2026-10-25T07:00:00Z", user: { login: "bot" } }]);
-    if ((r = p.match(/\/pulls\/(\d+)\/merge$/))) { w.merged = Number(r[1]); return J(200, { merged: true }); }
-    if ((r = p.match(/\/pulls\/(\d+)$/)) && m === "PATCH") { w.closed = Number(r[1]); return J(200, {}); }
     if (p.endsWith("/commits") && m === "GET") return J(200, [{ sha: "a".repeat(40), commit: { message: "dashboard: x\n\nmore", author: { name: "n", date: "2026-10-25T00:00:00Z" } } }]);
     return J(500, { unexpected: `${m} ${p}` });
   };

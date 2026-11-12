@@ -1,6 +1,6 @@
 # NewsBot engine
 
-An automated, bilingual (Bengali and English) news site that tries to be trustworthy rather than big. Every hour it
+An automated multilingual news site (Bengali, English, Spanish, French, Hindi; more can be added) that tries to be trustworthy rather than big. Every hour it
 looks at Google Trends, Google News and trusted RSS feeds, picks the few stories worth covering, gathers facts from
 several independent sources, cross-checks them, and writes a source-analysed article. The same story is updated in
 place (same URL) when verified new facts appear. Hosting is Cloudflare Pages (free plan), the models are Cloudflare Workers AI's free
@@ -12,7 +12,7 @@ private (config, prompts, state, articles) lives in a second, private repository
 
 ```
 hourly -> discover -> cluster -> score -> gate -> fetch -> extract -> verify -> write (bn/en) -> QA
-       -> brain repo (state + content, or a pull request in review mode) -> Hugo -> Cloudflare Pages
+       -> brain repo (state + content; cancelled drafts go to rejected/) -> Hugo -> Cloudflare Pages (one site per language)
 ```
 
 Most hours end at the gate with zero model calls: publishing nothing is a normal, correct result (a typical day is
@@ -22,8 +22,10 @@ Most hours end at the gate with zero model calls: publishing nothing is a normal
 
 - **Facts only from the verified fact sheet.** A claim is *confirmed* only when two or more independent tier 1/2
   organisations agree; otherwise it is written as reported, unclear or disputed. Code decides the status, not the model.
-- **Sensitive topics never auto-publish** (deaths, accusations against named people, health claims, elections,
-  religious or communal issues, minors, financial advice): they wait in `pending/` for a human.
+- **Nothing waits for a human.** A draft is checked by the quality gates and fixed automatically where possible; then it
+  is published, or (if a gate still fails) cancelled and archived in the brain's `rejected/<lang>/` with the reasons, so
+  the next upgrade can learn from it. Sensitive topics (deaths, accusations against named people, health claims, elections,
+  religious or communal issues, minors, financial advice) follow `publish.on_sensitive` (`publish` or `reject`).
 - **Every article shows** its sources with tier and date, a confirmed / unclear / disputed block, the last update
   time, a corrections log, and an AI-assisted line.
 - **Fetched web text is untrusted.** Injection-like sentences are dropped at fetch, text goes to models only inside
@@ -36,7 +38,7 @@ Most hours end at the gate with zero model calls: publishing nothing is a normal
   end-to-end encrypted: set `notify.telegram.include_summary: false` to send titles only).
 - **Not guaranteed:** the quality of real-model articles, Bengali fluency, and the live behaviour of GitHub Actions,
   Cloudflare and Hugo were not testable while building; every such assumption is marked `VERIFY` in the code and the
-  first `setup` and CI runs check the most important ones. Start in review mode and read what it writes.
+  first `setup` and CI runs check the most important ones. Read what it writes in the first days.
 
 ## Setup (10 steps)
 
@@ -45,16 +47,15 @@ Do these once, in order. Full detail with every secret and setting: [`docs/FIRST
 ## 1. Repos
 Create **newsbot-engine** (public) with the contents of `engine/`, and **newsbot-brain** (private) with everything in
 `brain-template/` (including the `.gitkeep` files). In the brain's `config/newsbot.yaml` set `site.name`,
-`site.base_url` and `publish.mode: review`. Keep `main` as the default branch in both and do not protect the brain's `main`.
+`site.base_url` (or `site.auto_sites`). Keep `main` as the default branch in both and do not protect the brain's `main`.
 
 ## 2. Accounts and tokens
 Cloudflare: note the Account ID and create an API token with *Cloudflare Pages: Edit* and *Workers AI: Read*. LLM accounts: any number of
-Cloudflare accounts, added later in the dashboard (page LLM). GitHub: a fine-grained token for the **brain repo only** with *Contents* and
-*Pull requests* read and write. Telegram (optional, recommended): a bot from **@BotFather** (`/newbot`), press Start on it,
+Cloudflare accounts, added later in the dashboard (page LLM). GitHub: a fine-grained token for the **brain repo only** with *Contents* read and write. Telegram (optional, recommended): a bot from **@BotFather** (`/newbot`), press Start on it,
 and find your chat ID (details in FIRST_RUN).
 
 ## 3. Engine repo secrets and variables (Settings, Secrets and variables, Actions)
-Secrets: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `BRAIN_REPO_TOKEN`, and for Telegram `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (both or neither). Variables: `BRAIN_REPO` (`owner/newsbot-brain`), `PAGES_PROJECT`, `PUBLISH_MODE` (`review`).
+Secrets: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `BRAIN_REPO_TOKEN`, and for Telegram `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (both or neither). Variables: `BRAIN_REPO` (`owner/newsbot-brain`), `PAGES_PROJECT`.
 
 ## 4. Run `setup` (Actions tab, setup, Run workflow)
 Every line must say `OK` (`SKIP` for Telegram is fine; with Telegram set it also sends a test message). It creates the Pages project if missing and
@@ -68,20 +69,17 @@ Replace every `[OWNER: ...]` in the trust pages through overrides in the brain's
 ## 6. Dry run
 Run `hourly` by hand with mode **dry-run**: fixtures and a mock model, no keys spent, nothing committed or deployed.
 
-## 7. Real run in review mode
-Run `hourly` by hand with the mode field empty (it uses `PUBLISH_MODE`, default `review`). "No new stories" is a normal
-result. A story that passes every gate opens a pull request in the brain repo, `Review: new articles <date-time>`.
+## 7. First real run
+Run `hourly` by hand with the mode field empty (publishes). "No new stories" is a normal result. A story that passes the gates is committed
+to the brain's `content/` and the sites are rebuilt and deployed in the same run.
 
-## 8. Approve on a phone
-With Telegram connected, each article that needs you arrives as its own message with an **Open PR** button, and every run sends a
-quiet report of all steps (✅ ok, ❌ fail, 🛑 error, ⏭ skip). In the GitHub app open the pull request and read the article under *Files changed*. **Merge** to publish (the next
-`hourly` run deploys it); **close** to reject. Drafts that failed a gate or are sensitive wait in `pending/<lang>/`
-with their reasons; to publish one, move it to `content/<lang>/` and delete its `pending:` block.
+## 8. Watch it from a phone
+With Telegram connected, every run sends a quiet report of all steps (✅ ok, ❌ fail, 🛑 error, ⏭ skip) and one quiet line per published article.
+The dashboard shows the sites, visitors, the published articles (editable, can be hidden) and the **cancelled drafts** (read only) with the reason each failed.
 
-## 9. Go automatic only when you trust it
-After a few weeks of merging nearly everything unchanged, set the `PUBLISH_MODE` variable to `auto`. Sensitive and
-failed-gate articles still go to `pending/`. Updates to live articles follow the same rule (a pull request in review
-mode). You can switch back to `review` at any time.
+## 9. Let it learn
+Cancelled drafts stay in the brain's `rejected/<lang>/`, and the self-learning files in `state/learning/` collect what the gates got wrong
+([`docs/SELF_LEARNING.md`](docs/SELF_LEARNING.md)). After a few days send them with the run logs for the next upgrade.
 
 ## 10. Later
 Bengali font subset and AdSense: [`docs/SITE.md`](docs/SITE.md) (turn ads on only after approval). The monthly

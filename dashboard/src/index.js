@@ -56,7 +56,6 @@ async function overview(env) {
   const lastOf = (name) => (rs || []).find((r) => r.name === name) || null;
   return {
     site: { name: yget(["site", "name"]), url: base, check: site, deployed: parseJson(snap.deployed, {}).deployed_at || null },
-    mode: yget(["publish", "mode"]) || "review",
     ads: yget(["ads", "enabled"]) === true,
     counts: snap.counts,
     usage: { day: usage.day || null, counters: usage.counters || {} },
@@ -82,31 +81,19 @@ const ROUTES = {
   "POST /api/dispatch": async (env, req, b) => {
     must(typeof b.workflow === "string", 400, "workflow?");
     let inputs;
-    if (b.workflow === "hourly" && b.mode) { must(["auto", "review", "dry-run"].includes(b.mode), 400, "bad mode"); inputs = { mode: b.mode }; }
+    if (b.workflow === "hourly" && b.mode) { must(["auto", "dry-run"].includes(b.mode), 400, "bad mode"); inputs = { mode: b.mode }; }
     await gh.dispatch(env, b.workflow, inputs);
     await audit(env, req, "run workflow", `${b.workflow}${inputs ? " " + inputs.mode : ""}`);
     return { ok: true };
   },
-  "GET /api/drafts": (env, req, b, u) => articles.list(env, "pending", u.searchParams.get("lang"), Number(u.searchParams.get("offset")) || 0, u.searchParams.get("q") || ""),
-  "GET /api/draft": (env, req, b, u) => articles.open(env, "pending", u.searchParams.get("lang"), u.searchParams.get("slug")),
-  "POST /api/draft": async (env, req, b) => {
-    const r = await articles.draftAction(env, b);
-    await audit(env, req, `draft ${b.action}`, `${b.lang}/${b.slug} -> ${r.key}`);
-    return r;
-  },
+  "GET /api/rejected": (env, req, b, u) => articles.list(env, "rejected", u.searchParams.get("lang"), Number(u.searchParams.get("offset")) || 0, u.searchParams.get("q") || ""),
+  "GET /api/rejected-item": (env, req, b, u) => articles.open(env, "rejected", u.searchParams.get("lang"), u.searchParams.get("slug")),
   "GET /api/articles": (env, req, b, u) => articles.list(env, "content", u.searchParams.get("lang"), Number(u.searchParams.get("offset")) || 0, u.searchParams.get("q") || ""),
   "GET /api/article": (env, req, b, u) => articles.open(env, "content", u.searchParams.get("lang"), u.searchParams.get("slug")),
   "POST /api/article": async (env, req, b) => {
     const r = await articles.articleAction(env, b);
     await audit(env, req, `article ${b.action}`, `${b.lang}/${b.slug} -> ${r.key}`);
     return r;
-  },
-  "GET /api/prs": async (env) => ({ prs: await gh.openPrs(env) }),
-  "POST /api/pr": async (env, req, b) => {
-    await gh.prAction(env, b.number, b.action);
-    if (b.action === "merge") await gh.deploy(env).catch(() => {});
-    await audit(env, req, `pr ${b.action}`, `#${b.number}`);
-    return { ok: true };
   },
   "GET /api/settings": (env) => settings.describe(env),
   "POST /api/settings": async (env, req, b) => {

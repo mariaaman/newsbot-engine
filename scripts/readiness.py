@@ -3,8 +3,8 @@
 no titles, no article text, no keys). Usage: readiness.py <brain_dir> [--engine-dir .]
 
 Inputs from the environment (all optional): STEP_OUTCOMES="tests=success,validate=failure,..." from the workflow steps,
-BRAIN_REPO + GH_TOKEN (brain PR statistics), RUN_REPO + RUN_TOKEN (recent hourly runs).
-Exit 0 = no blockers (ready for review mode), 1 = at least one blocker. The AUTO verdict is printed separately."""
+RUN_REPO + RUN_TOKEN (recent hourly runs).
+Exit 0 = no blockers, 1 = at least one blocker."""
 from __future__ import annotations
 
 import json
@@ -59,9 +59,8 @@ def check_steps() -> None:
 
 def check_brain(brain: Path, engine: Path) -> dict:
     cfg = yaml.safe_load((brain / "config" / "newsbot.yaml").read_text(encoding="utf-8")) or {}
-    site, ads, mode = cfg.get("site", {}), cfg.get("ads", {}), (cfg.get("publish") or {}).get("mode")
+    site, ads = cfg.get("site", {}), cfg.get("ads", {})
     langs = site.get("languages") or ["bn", "en"]
-    add("PASS" if mode == "review" else "INFO", "publish.mode in brain config", str(mode))
     base = str(site.get("base_url", ""))
     add("PASS" if base.startswith("https://") and "example" not in base else "FAIL", "site.base_url is a real https URL")
     add("PASS" if site.get("name") and "example" not in str(site.get("name")).lower() else "FAIL", "site.name set")
@@ -82,19 +81,19 @@ def check_brain(brain: Path, engine: Path) -> dict:
             if f.exists():
                 left += len(re.findall(r"\[OWNER", f.read_text(encoding="utf-8")))
     add("PASS" if left == 0 else "FAIL", "trust pages have no [OWNER: ...] placeholder left", f"{left} left")
-    # articles and pending
+    # articles and the cancelled-draft archive
     published = {l: len([p for p in (brain / "content" / l).glob("*.md")]) for l in langs}
     add("INFO", "published articles", ", ".join(f"{l}={n}" for l, n in published.items()))
-    reasons, pend = Counter(), 0
+    reasons, rej = Counter(), 0
     for l in langs:
-        for p in (brain / "pending" / l).glob("*.md"):
-            pend += 1
-            fm = (front_matter(p).get("pending") or {})
+        for p in (brain / "rejected" / l).glob("*.md"):
+            rej += 1
+            fm = (front_matter(p).get("rejected") or {})
             reasons.update(fm.get("failures") or [])
             reasons.update(fm.get("review") or [])
-    add("INFO", "pending drafts waiting for a human", str(pend))
+    add("INFO", "cancelled drafts archived in rejected/", str(rej))
     if reasons:
-        add("INFO", "pending reasons", ", ".join(f"{k}={v}" for k, v in reasons.most_common(8)))
+        add("INFO", "cancel reasons", ", ".join(f"{k}={v}" for k, v in reasons.most_common(8)))
     # state size
     dec = brain / "state" / "decisions.jsonl"
     mb = dec.stat().st_size / 1e6 if dec.exists() else 0
@@ -116,7 +115,7 @@ def check_brain(brain: Path, engine: Path) -> dict:
             add("INFO", "tokens used today", ", ".join(f"{k.split('/')[0]}={v.get('tokens', 0)}" for k, v in sorted(c.items())))
         except ValueError:
             pass
-    return {"published": sum(published.values()), "left": left, "pending": pend}
+    return {"published": sum(published.values()), "left": left, "rejected": rej}
 
 
 def failed_steps(run_id) -> str:
@@ -148,16 +147,6 @@ def check_actions() -> dict:
             why = failed_steps(done[0].get("databaseId"))
             if why:
                 add("INFO", "latest hourly run: conclusion and failed steps", why)
-    prs = gh_json(["pr", "list", "--repo", os.environ.get("BRAIN_REPO", ""), "--state", "all", "--limit", "100",
-                   "--json", "state,mergedAt,closedAt,title"], os.environ.get("GH_TOKEN"))
-    if prs is None:
-        add("WARN", "brain pull request statistics", "not readable")
-    else:
-        rev = [p for p in prs if str(p.get("title", "")).startswith("Review:")]
-        merged = sum(p.get("state") == "MERGED" for p in rev)
-        closed = sum(p.get("state") == "CLOSED" for p in rev)
-        out["merged"], out["closed"] = merged, closed
-        add("INFO", "review pull requests", f"merged={merged} closed_unmerged={closed} open={len(rev) - merged - closed}")
     return out
 
 
@@ -172,14 +161,9 @@ def main(argv: list[str]) -> int:
         print(f"{level:4}  {name.ljust(width)}  {detail}")
     blockers = [n for l, n, _ in rows if l == "FAIL"]
     print()
-    print("REVIEW-MODE VERDICT:", "READY" if not blockers else f"NOT READY ({len(blockers)} blocker(s))")
+    print("VERDICT:", "READY" if not blockers else f"NOT READY ({len(blockers)} blocker(s))")
     for n in blockers:
         print("  blocker:", n)
-    merged, closed = a.get("merged", 0), a.get("closed", 0)
-    rate = merged / (merged + closed) if merged + closed else 0
-    auto = (not blockers and merged >= 20 and rate >= 0.9 and bool(a.get("recent_ok")) and a["recent_ok"][2])
-    print("AUTO-MODE VERDICT:", "READY" if auto else "NOT YET",
-          f"(needs >=20 merged review PRs with >=90% approval; now merged={merged} rate={rate:.0%})")
     return 1 if blockers else 0
 
 

@@ -1,1 +1,1 @@
-v20: nothing waits - on_failure/on_sensitive/on_review, rejected/ archive
+v22: fresh clean-up. Nothing waits for a human: no review mode, no pending/, no PR flow, no Telegram approve Worker. Publish or cancel (rejected/). Dashboard: cancelled-drafts tab. Includes v21 (hourly publishes by default).

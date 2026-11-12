@@ -114,7 +114,8 @@ def test_hourly_flow_order_and_guards():
     # the commit also runs after a failed or timed-out engine step: state and diagnostics must not be lost with it
     assert commit["if"] == "always() && env.MODE != 'dry-run' && steps.checkout_brain.outcome == 'success'"
     assert next(s for s in st if s.get("id") == "run")["timeout-minutes"] < wf["jobs"]["run"]["timeout-minutes"]
-    assert "env.MODE" in plan["if"] and wf["jobs"]["run"]["env"]["MODE"].endswith("'review' }}")   # default is review
+    assert "env.MODE" in plan["if"] and wf["jobs"]["run"]["env"]["MODE"].startswith("${{ inputs.mode || 'auto' }}")   # auto unless started as dry-run
+    assert "review" not in (wf["on"]["workflow_dispatch"]["inputs"]["mode"]["description"])
     brain_co = next(s for s in st if s.get("with", {}).get("path") == "brain")
     assert "vars.BRAIN_REPO" in brain_co["with"]["repository"] and "secrets.BRAIN_REPO_TOKEN" in brain_co["with"]["token"]
     assert next(s for s in st if "-m newsbot run" in s.get("run", ""))["run"].count("--brain brain") == 1
@@ -162,7 +163,7 @@ def _setup(tmp: Path):
     _git(tmp, "init", "-q", "--bare", "-b", "main", str(origin))
     _git(tmp, "clone", "-q", str(origin), str(brain))
     _git(brain, "checkout", "-q", "-b", "main")
-    for d in ("state", "pending", "content/en"):
+    for d in ("state", "rejected", "content/en"):
         (brain / d).mkdir(parents=True)
         (brain / d / ".gitkeep").write_text("")
     _git(brain, "add", "-A")
@@ -183,7 +184,7 @@ def _script(brain, mode, env):
 
 def _write_run_output(brain):
     (brain / "state" / "stories.jsonl").write_text('{"story_id": "st-1"}\n')
-    (brain / "pending" / "d.md").write_text("draft")
+    (brain / "rejected" / "d.md").write_text("draft")
     (brain / "content" / "en" / "a.md").write_text("---\ntitle: a\n---\nbody\n")
 
 
@@ -195,46 +196,31 @@ def test_brain_commit_auto_puts_everything_on_main():
         r = _script(brain, "auto", env)
         assert r.returncode == 0 and r.stdout.split() == ["committed"], r.stderr
         files = _git(origin, "ls-tree", "-r", "--name-only", "main").split()
-        assert {"state/stories.jsonl", "pending/d.md", "content/en/a.md"} <= set(files)
+        assert {"state/stories.jsonl", "rejected/d.md", "content/en/a.md"} <= set(files)
         r2 = _script(brain, "auto", env)
         assert r2.stdout.split() == ["nothing-to-commit"]
 
 
-def test_brain_commit_review_keeps_content_off_main_and_opens_a_pr():
+def test_brain_commit_review_mode_no_longer_exists():
     with tempfile.TemporaryDirectory() as d:
         tmp = Path(d)
         origin, brain, env = _setup(tmp)
         _write_run_output(brain)
-        r = _script(brain, "review", env)
-        assert r.returncode == 0 and r.stdout.split() == ["committed", "pr-opened"], r.stderr
-        main_files = set(_git(origin, "ls-tree", "-r", "--name-only", "main").split())
-        assert "state/stories.jsonl" in main_files and "pending/d.md" in main_files
-        assert "content/en/a.md" not in main_files                       # not published until the PR is merged
-        branches = _git(origin, "branch", "--list", "review/*").split()
-        assert len(branches) == 1 and "content/en/a.md" in _git(origin, "ls-tree", "-r", "--name-only", branches[0]).split()
-        assert _git(brain, "branch", "--show-current").strip() == "main"
-        assert not (brain / "content" / "en" / "a.md").exists()          # the Hugo build sees main only
-        log = (tmp / "gh.log").read_text()
-        assert "pr create" in log and "--base main" in log
-        assert "example.invalid" not in r.stdout                         # PR URL is never printed to the public log
+        assert _script(brain, "review", env).returncode == 2                  # nothing waits for a human any more
+        assert not set(_git(origin, "branch", "--list", "review/*").split())
 
 
-def test_brain_commit_review_sees_modified_published_articles_and_keeps_the_old_text_on_main():
-    """M7: an UPDATE rewrites an existing content file; in review mode the change goes to a PR, main keeps the old text."""
+def test_brain_commit_publishes_modified_articles_straight_to_main():
+    """An UPDATE rewrites an existing content file; it goes live with the next build."""
     with tempfile.TemporaryDirectory() as d:
         tmp = Path(d)
         origin, brain, env = _setup(tmp)
         _write_run_output(brain)
         assert _script(brain, "auto", env).stdout.split() == ["committed"]
-        (brain / "content" / "en" / "a.md").write_text("---\ntitle: a\n---\nbody UPDATED\n")      # modified, not new
-        (brain / "state" / "stories.jsonl").write_text('{"story_id": "st-1", "updates": ["t"]}\n')
-        r = _script(brain, "review", env)
-        assert r.returncode == 0 and r.stdout.split() == ["committed", "pr-opened"], r.stderr
-        assert "UPDATED" not in _git(origin, "show", "main:content/en/a.md")
-        assert "updates" in _git(origin, "show", "main:state/stories.jsonl")        # state still goes straight to main
-        branch = _git(origin, "branch", "--list", "review/*").split()[0]
-        assert "UPDATED" in _git(origin, "show", f"{branch}:content/en/a.md")
-        assert "UPDATED" not in (brain / "content" / "en" / "a.md").read_text()      # working tree is back on main
+        (brain / "content" / "en" / "a.md").write_text("---\ntitle: a\n---\nbody UPDATED\n")
+        r = _script(brain, "auto", env)
+        assert r.returncode == 0 and r.stdout.split() == ["committed"], r.stderr
+        assert "UPDATED" in _git(origin, "show", "main:content/en/a.md")
 
 
 def test_brain_commit_state_mode_and_bad_mode():

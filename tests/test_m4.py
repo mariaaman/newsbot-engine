@@ -194,20 +194,20 @@ def test_llm_qa_check_hits_fail_and_outages_go_to_review():
               {"mock": MockProvider({"qa_check": {"unsupported": [{"claim": "Riders doubled", "reason": "not in sheet"}]}})})
     r = run_gates(base(), STORIES["ev-metro"], "en", CFG, recent=[], llm=hit)
     assert "unsupported_claims" in r.failures and r.details["unsupported_claims"]["unsupported"] == ["Riders doubled"]
-    assert r.disposition == "pending"
+    assert r.disposition == "rejected"
 
     class Out:
         def complete(self, *a, **k):
             raise BudgetExhausted("x")
     r = run_gates(base(), STORIES["ev-metro"], "en", CFG, recent=[], llm=Out())
-    assert r.failures == [] and r.review == ["qa_check_unavailable"] and r.disposition == "pending"
+    assert r.failures == [] and r.review == ["qa_check_unavailable"] and r.disposition == "rejected"
     assert run_gates(base(), STORIES["ev-metro"], "en", CFG, recent=[]).review == ["qa_check_not_run"]
     assert validate_qa_check({"unsupported": ["a", {"claim": "b"}]}) == ["a", "b"]
 
 
 def test_schema_failure_short_circuits():
     r = run_gates({"title": "x"}, STORIES["ev-metro"], "en", CFG)
-    assert r.failures == ["schema"] and r.disposition == "pending"
+    assert r.failures == ["schema"] and r.disposition == "rejected"
 
 
 # ---------------- review (sensitive / low confidence) ----------------
@@ -230,7 +230,7 @@ def test_default_keywords_match_the_brain_template():
 def test_sensitive_article_goes_to_pending_not_failure():
     cfg = make_cfg(sensitive={"keywords": {"transport": ["metro"]}})
     r = gates(base(), cfg=cfg)
-    assert r.failures == [] and r.review == ["sensitive:transport"] and r.disposition == "pending"
+    assert r.failures == [] and r.review == ["sensitive:transport"] and r.disposition == "rejected"
 
 
 def test_low_confidence_goes_to_pending():
@@ -247,9 +247,9 @@ def test_dry_run_pipeline_writes_article_and_parks_sensitive_story():
         r = run_pipeline(make_cfg(), "dry-run", Path(d), now=NOW)
         (sid, res), = r["articles"].items()
         a = res["en"]
-        assert a.qa.failures == [] and a.qa.review == ["sensitive:death"] and a.status == "pending"   # 12 people died
-        assert "en:pending" in next(x for x in r["decisions"] if x.story_id == sid).reason
-        assert not (Path(d) / "pending").exists()          # dry-run writes nothing
+        assert a.qa.failures == [] and a.qa.review == ["sensitive:death"] and a.status == "rejected"   # 12 people died
+        assert "en:rejected" in next(x for x in r["decisions"] if x.story_id == sid).reason
+        assert not (Path(d) / "rejected").exists()          # dry-run writes nothing
 
 
 def test_outputs_publish_to_content_and_pending_with_reasons_then_duplicate_blocked():
@@ -264,11 +264,11 @@ def test_outputs_publish_to_content_and_pending_with_reasons_then_duplicate_bloc
         recent = load_recent_articles(d, "en")
         assert recent and recent[0]["story_id"] == "ev-metro"
         res2 = produce_articles(STORIES["ev-policy-rate"], ["en"], CFG, None, dry_llm(), recent_by_lang={"en": recent})
-        assert res2["en"].status in ("publish", "pending")      # different story is not a duplicate of the metro one
-        # a bad draft is parked in pending/ with its reasons
-        bad = ArticleResult("en", "pending", {**res["en"].article, "slug": "bad-draft"}, gates(with_body(base(), "Total 777 [S1].")))
+        assert res2["en"].status in ("publish", "rejected")      # different story is not a duplicate of the metro one
+        # a bad draft is archived in rejected/ with its reasons
+        bad = ArticleResult("en", "rejected", {**res["en"].article, "slug": "bad-draft"}, gates(with_body(base(), "Total 777 [S1].")))
         write_outputs(d, fs, {"en": bad}, NOW)
-        p = (Path(d) / "pending" / "en" / "bad-draft.md").read_text(encoding="utf-8")
+        p = (Path(d) / "rejected" / "en" / "bad-draft.md").read_text(encoding="utf-8")
         assert "unsupported_number" in p and "failures:" in p
 
 
@@ -279,7 +279,7 @@ def test_budget_and_failures_are_per_language():
         def complete(self, task, msgs, schema=None, **kw):
             return dry_run_provider().responses[task](msgs) if schema is validate_article else {"unsupported": []}
     res = produce_articles(STORIES["ev-metro"], ["bn", "en"], CFG, None, NoBudget(), recent_by_lang={"en": [], "bn": []})
-    assert res["bn"].status == "queued_budget" and res["bn"].article is None and res["en"].status in ("publish", "pending")
+    assert res["bn"].status == "queued_budget" and res["bn"].article is None and res["en"].status in ("publish", "rejected")
 
     class Broken(NoBudget):
         def can_run(self, *a):

@@ -1,10 +1,10 @@
-// GitHub access for the dashboard. Reuses the approve Worker's tested helpers (worker/index.js): gh(), commit(), deploy(), act().
+// GitHub access for the dashboard (REST + GraphQL). Low-level helpers: ghlib.js.
 import { CODES } from "./langs.js";
-import { gh, b64utf8, commit, deploy, act, draftRef, applyEdits, split, readField, findDraft } from "../../worker/index.js";
+import { gh, b64utf8, commit, deploy, applyEdits, split, readField, preview } from "./ghlib.js";
 import { sealToBase64 } from "./sealedbox.js";
 import { HttpError } from "./util.js";
 
-export { act, commit, deploy, draftRef, applyEdits, split, readField, findDraft };
+export { commit, deploy, applyEdits, split, readField, preview };
 
 const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 export const repos = (env) => ({ brain: env.BRAIN_REPO, branch: env.BRAIN_BRANCH || "main", engine: env.ENGINE_REPO, eb: env.ENGINE_BRANCH || "main" });
@@ -76,12 +76,12 @@ export async function brainSnapshot(env) {
   const tree = (alias, path) => `${alias}: object(expression: ${JSON.stringify(`${branch}:${path}`)}) { ... on Tree { entries { name } } }`;
   const data = await graphql(env, `{ repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) {
     ${blob("newsbot", "config/newsbot.yaml")} ${blob("usage", "state/usage.json")} ${blob("cooldowns", "state/cooldowns.json")} ${blob("deployed", "state/deployed.json")}
-    ${CODES.map((c) => `${tree("p_" + c, "pending/" + c)} ${tree("c_" + c, "content/" + c)}`).join(" ")} } }`);
+    ${CODES.map((c) => `${tree("r_" + c, "rejected/" + c)} ${tree("c_" + c, "content/" + c)}`).join(" ")} } }`);
   const r = data.repository || {};
   const n = (k) => (r[k]?.entries || []).filter((e) => e.name.endsWith(".md")).length;
   const per = (prefix) => Object.fromEntries(CODES.map((c) => [c, n(prefix + c)]).filter(([c, k]) => k > 0 || c === "bn" || c === "en"));   // the screens read a missing language as 0
   return { newsbot: r.newsbot?.text || "", usage: r.usage?.text || "", cooldowns: r.cooldowns?.text || "", deployed: r.deployed?.text || "",
-    counts: { pending: per("p_"), published: per("c_") } };
+    counts: { rejected: per("r_"), published: per("c_") } };
 }
 
 export async function runs(env, limit = 20) {
@@ -90,7 +90,7 @@ export async function runs(env, limit = 20) {
   return (j.workflow_runs || []).map((r) => ({ id: r.id, name: r.name, event: r.event, status: r.status, conclusion: r.conclusion, created: r.created_at, started: r.run_started_at, updated: r.updated_at, url: r.html_url, title: (r.display_title || "").slice(0, 100) }));
 }
 
-export const WORKFLOWS = ["hourly", "deploy", "validate-config", "setup-approve", "setup", "readiness", "llm-check"];
+export const WORKFLOWS = ["hourly", "deploy", "validate-config", "setup", "readiness", "llm-check"];
 export async function dispatch(env, workflow, inputs) {
   if (!WORKFLOWS.includes(workflow)) throw new HttpError(400, "unknown workflow");
   const { engine, eb } = repos(env);
@@ -128,24 +128,6 @@ export async function putSecret(env, name, value) {
   const res = await gh(env, `/repos/${engine}/actions/secrets/${q(name)}`, { method: "PUT", body: JSON.stringify({ encrypted_value: sealToBase64(value, pk.key), key_id: pk.key_id }) });
   need(res, 201, 204);
   return res.status === 201 ? "created" : "updated";
-}
-
-export async function openPrs(env) {
-  const { brain } = repos(env);
-  const j = need(await gh(env, `/repos/${brain}/pulls?state=open&per_page=30`), 200);
-  return j.map((p) => ({ number: p.number, title: (p.title || "").slice(0, 140), url: p.html_url, created: p.created_at, user: p.user?.login }));
-}
-export async function prAction(env, number, action) {
-  const { brain } = repos(env);
-  if (!Number.isInteger(number) || number < 1) throw new HttpError(400, "bad PR number");
-  if (action === "merge") {
-    const r = await gh(env, `/repos/${brain}/pulls/${number}/merge`, { method: "PUT", body: JSON.stringify({ merge_method: "squash" }) });
-    if (r.status === 405 || r.status === 409) throw new HttpError(409, "GitHub cannot merge this PR right now");
-    need(r, 200);
-    return;
-  }
-  if (action === "close") { need(await gh(env, `/repos/${brain}/pulls/${number}`, { method: "PATCH", body: JSON.stringify({ state: "closed" }) }), 200); return; }
-  throw new HttpError(400, "unknown action");
 }
 
 export async function history(env, path) {

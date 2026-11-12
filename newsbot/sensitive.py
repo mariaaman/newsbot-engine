@@ -1,8 +1,8 @@
-"""Sensitive-topic detection (spec rule 6). Sensitive drafts never auto-publish: they go to pending/ for
-human review. Keyword lists come from config (`sensitive.keywords`); the built-in lists apply when the
+"""Sensitive-topic detection (spec rule 6). Sensitive drafts are flagged; publish.on_sensitive decides
+whether they go live or are cancelled (archived in rejected/). Keyword lists come from config (`sensitive.keywords`); the built-in lists apply when the
 config gives none. English entries match whole words ("word*" = prefix match); entries containing
 non-ASCII characters (Bengali) match as substrings because Bengali has no stemming here.
-Deliberately broad: a false positive costs a human glance, a false negative costs trust."""
+Deliberately broad: a false positive only flags a draft."""
 from __future__ import annotations
 
 import re

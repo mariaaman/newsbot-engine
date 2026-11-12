@@ -105,9 +105,7 @@ def local_day_start(now: datetime, offset_hours: float) -> datetime:
 
 def _version_counts_today(v: dict, day_start: datetime) -> bool:
     state = v.get("state", "published")         # missing state = published (M1-era data)
-    if state in ("awaiting_review", "pending"):  # drafts also use up the daily cap, or an unreviewed PR queue is unbounded
-        return True
-    if state == "rejected":
+    if state in ("awaiting_review", "pending", "rejected"):    # cancelled (or old-style waiting) drafts never count
         return False
     return bool(v.get("published_at")) and parse_ts(v["published_at"]) >= day_start
 

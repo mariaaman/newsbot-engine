@@ -21,7 +21,7 @@ def test_other_languages_are_translations_of_the_lead():
     res = produce_articles(STORIES["ev-metro"], ["bn", "en", "es"], cfg(), None, llm, recent_by_lang={"bn": [], "en": [], "es": []})
     assert calls.count("write_en") >= 1 and "write_bn" not in calls and "write_es" not in calls
     assert "translate_bn" in calls and "translate_es" in calls
-    assert res["en"].status in ("publish", "pending") and res["bn"].article["slug"] == res["en"].article["slug"]
+    assert res["en"].status in ("publish", "rejected") and res["bn"].article["slug"] == res["en"].article["slug"]
 
 
 def test_a_failed_lead_is_not_translated():

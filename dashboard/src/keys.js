@@ -9,9 +9,9 @@ const bearer = (v) => ({ headers: { Authorization: `Bearer ${v}` } });
 const verdict = (res, okCodes = [200]) => res.status === 0 ? { ok: null, detail: "could not reach the service" } : okCodes.includes(res.status) ? { ok: true, detail: "accepted" } : res.status === 401 || res.status === 403 ? { ok: false, detail: "rejected (wrong or no permission)" } : { ok: null, detail: `service answered ${res.status}` };
 
 export const KEYS = [
-  { name: "TELEGRAM_BOT_TOKEN", label: "Telegram bot token", after: "setup-approve",
+  { name: "TELEGRAM_BOT_TOKEN", label: "Telegram bot token",
     test: async (v) => { if (!/^\d{5,}:[A-Za-z0-9_-]{30,}$/.test(v)) return { ok: false, detail: "does not look like a bot token" }; const r = await t(`https://api.telegram.org/bot${v}/getMe`); return r.status === 200 && r.json?.ok ? { ok: true, detail: "bot found" } : verdict(r); } },
-  { name: "TELEGRAM_CHAT_ID", label: "Telegram chat id", after: "setup-approve", test: async (v) => /^-?\d{5,}$/.test(v) ? { ok: true, detail: "format ok" } : { ok: false, detail: "should be a number" } },
+  { name: "TELEGRAM_CHAT_ID", label: "Telegram chat id", test: async (v) => /^-?\d{5,}$/.test(v) ? { ok: true, detail: "format ok" } : { ok: false, detail: "should be a number" } },
   { name: "CLOUDFLARE_API_TOKEN", label: "Cloudflare API token", test: async (v) => { const r = await t("https://api.cloudflare.com/client/v4/user/tokens/verify", bearer(v)); return r.status === 200 && r.json?.success ? { ok: true, detail: "token is active" } : r.status === 0 ? verdict(r) : { ok: null, detail: "could not verify here (an account-scoped token cannot be checked this way); saved only if you confirm" }; } },
   { name: "CLOUDFLARE_ACCOUNT_ID", label: "Cloudflare account id", test: async (v) => /^[0-9a-f]{32}$/.test(v) ? { ok: true, detail: "format ok" } : { ok: false, detail: "should be 32 hex characters" } },
   { name: "BRAIN_REPO_TOKEN", label: "Brain repo token", test: (v, env) => repoToken(v, env.BRAIN_REPO) },

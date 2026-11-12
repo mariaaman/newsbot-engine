@@ -12,7 +12,7 @@ def test_template_loads_with_spec_defaults():
     cfg = load_config(TEMPLATE)
     assert cfg.limits.max_new_per_day == 24
     assert cfg.limits.max_updates_per_story_per_day == 3
-    assert cfg.publish.mode == "review"
+    assert cfg.publish.on_failure == "reject" and cfg.publish.on_sensitive == "publish"
     assert cfg.scoring.threshold == 0.6
     assert cfg.qa.min_words == {"bn": 450, "en": 500}
     assert cfg.ads.enabled is False

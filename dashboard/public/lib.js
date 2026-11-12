@@ -1,4 +1,4 @@
-// Helpers for app.js: a tiny element builder, the API caller, formatting, and the draft front-matter reader.
+// Helpers for app.js: a tiny element builder, the API caller, formatting, and the front-matter reader.
 // No innerHTML except where the caller passes server-escaped preview HTML; every other text goes in as text nodes.
 
 export const LANGS = [["bn", "বাংলা"], ["en", "English"]];          // replaced by the site's real languages (GET /api/languages) before the first screen
@@ -27,16 +27,10 @@ export const RAW_FILES = [
 
 export const WORKFLOW_LABELS = [
   ["hourly", "hourly: এখনই একটা রান"], ["deploy", "deploy: সাইট আবার প্রকাশ"], ["validate-config", "validate-config: কনফিগ যাচাই"], ["llm-check", "llm-check: সব LLM অ্যাকাউন্ট যাচাই"],
-  ["readiness", "readiness: প্রস্তুতি-পরীক্ষা"], ["setup-approve", "setup-approve: অনুমোদন Worker বসান"],
+  ["readiness", "readiness: প্রস্তুতি-পরীক্ষা"],
 ];
 
 export const MSG = {
-  approved: "✅ অনুমোদিত। ১–৩ মিনিটের মধ্যে সাইটে প্রকাশ হবে।",
-  approvedNoDeploy: "✅ অনুমোদিত, কিন্তু ডিপ্লয় চালু করা যায়নি। পরের hourly রানে বা deploy চালালে প্রকাশ হবে।",
-  rejected: "🗑 বাতিল করা হয়েছে, খসড়া মুছে গেছে।",
-  saved: "💾 সংরক্ষিত হয়েছে। এখনো প্রকাশ হয়নি।",
-  gone: "ℹ️ এটি আগেই নিষ্পন্ন হয়েছে (খসড়া আর pending-এ নেই)।",
-  gate: "⛔ মান-যাচাইয়ে ব্যর্থ খসড়া। নিজে দেখে নিচের টিক দিয়ে আবার চেষ্টা করুন।",
   stale: "⚠️ খসড়াটি ইতিমধ্যে বদলে গেছে। পাতা রিফ্রেশ করে আবার চেষ্টা করুন, কিছু সংরক্ষিত হয়নি।",
   published: "✅ সংরক্ষিত। ১–৩ মিনিটের মধ্যে সাইটে দেখা যাবে।",
   publishedNoDeploy: "✅ সংরক্ষিত, কিন্তু ডিপ্লয় চালু করা যায়নি। deploy চালান।",
@@ -140,20 +134,20 @@ export function titleOf(head) {
   return t || "(শিরোনাম নেই)";
 }
 
-/** The text under `pending:` in a front matter / head. */
-export function pendingOf(head) {
-  const m = (String(head || "") + "\n").match(/^pending:[^\n]*\n(?:[ \t]+[^\n]*\n)*/m);
-  return m ? m[0].replace(/^pending:[^\n]*\n/, "") : "";
+/** The text under `rejected:` in a front matter / head (the reasons a draft was cancelled). */
+export function rejectedOf(head) {
+  const m = (String(head || "") + "\n").match(/^rejected:[^\n]*\n(?:[ \t]+[^\n]*\n)*/m);
+  return m ? m[0].replace(/^rejected:[^\n]*\n/, "") : "";
 }
 
-/** { failures: [...], review: [...] } from the pending block (list items may sit at the same indent as their key). */
-export function parsePending(text) {
-  const out = { failures: [], review: [] };
+/** { failures: [...], review: [...] } from the rejected block (list items may sit at the same indent as their key). */
+export function parseRejected(text) {
+  const out = { failures: [], review: [], names: [], numbers: [] };
   let cur = null, m;
   const clean = (s) => s.trim().replace(/^["']|["']$/g, "");
   for (const raw of String(text || "").split("\n")) {
     const line = raw.replace(/\s+$/, "");
-    if ((m = line.match(/^\s*(failures|review):\s*(.*)$/))) {
+    if ((m = line.match(/^\s*(failures|review|names|numbers):\s*(.*)$/))) {
       cur = m[1];
       const rest = m[2].trim();
       if (rest && rest !== "[]") out[cur].push(...rest.replace(/^\[|\]$/g, "").split(",").map(clean).filter(Boolean));

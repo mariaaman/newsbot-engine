@@ -80,11 +80,11 @@ async function session(world = fakeWorld()) {
   return { env, cookie, w: world, c: (path, o = {}) => call(env, path, { cookie, ...o }) };
 }
 
-test("overview: counts, mode, site check, runs, usage and the secret names (never values)", async () => {
+test("overview: counts, site check, runs, usage and the secret names (never values)", async () => {
   const { c } = await session();
   const o = await j(await c("/api/overview"));
-  assert.deepEqual(o.counts, { pending: { bn: 1, en: 2 }, published: { bn: 0, en: 1 } });
-  assert.equal(o.mode, "review"); assert.equal(o.site.url, "https://news-site.pages.dev"); assert.equal(o.site.check.status, 200);
+  assert.deepEqual(o.counts, { rejected: { bn: 1, en: 2 }, published: { bn: 0, en: 1 } });
+  assert.ok(!("mode" in o)); assert.equal(o.site.url, "https://news-site.pages.dev"); assert.equal(o.site.check.status, 200);
   assert.equal(o.lastHourly.conclusion, "success"); assert.equal(o.lastDeploy.conclusion, "failure");
   assert.equal(o.usage.counters["cf_phone1/@cf/openai/gpt-oss-120b"].tokens, 41000);
   assert.deepEqual(o.secrets, ["BRAIN_REPO_TOKEN"]);
@@ -93,20 +93,21 @@ test("overview: counts, mode, site check, runs, usage and the secret names (neve
 test("settings: read, change one value with the comment kept, stale version refused, bad values refused, CI validation started", async () => {
   const { c, w } = await session();
   const d = await j(await c("/api/settings"));
-  const mode = d.fields.find((f) => f.path.join(".") === "publish.mode");
-  assert.equal(mode.value, "review"); assert.deepEqual(mode.options, ["review", "auto"]);
+  const mode = d.fields.find((f) => f.path.join(".") === "publish.on_sensitive");
+  assert.equal(mode.value, "publish"); assert.deepEqual(mode.options, ["publish", "reject"]);
+  assert.ok(!d.fields.some((f) => f.path.join(".") === "publish.mode"));
   assert.ok(d.chains.strong.length >= 1); assert.deepEqual(d.providers, ["workers_ai"]);
   const sha = d.files["config/newsbot.yaml"].sha;
-  let r = await c("/api/settings", { method: "POST", body: { changes: [{ file: "config/newsbot.yaml", kind: "field", path: ["publish", "mode"], value: "auto" }, { file: "config/newsbot.yaml", kind: "field", path: ["limits", "max_new_per_day"], value: 9 }], versions: { "config/newsbot.yaml": sha } } });
+  let r = await c("/api/settings", { method: "POST", body: { changes: [{ file: "config/newsbot.yaml", kind: "field", path: ["publish", "on_sensitive"], value: "reject" }, { file: "config/newsbot.yaml", kind: "field", path: ["limits", "max_new_per_day"], value: 9 }], versions: { "config/newsbot.yaml": sha } } });
   assert.equal(r.status, 200);
-  assert.equal(get(w.files["config/newsbot.yaml"], ["publish", "mode"]), "auto");
+  assert.equal(get(w.files["config/newsbot.yaml"], ["publish", "on_sensitive"]), "reject");
   assert.equal(get(w.files["config/newsbot.yaml"], ["limits", "max_new_per_day"]), 9);
-  assert.match(w.files["config/newsbot.yaml"], /mode: auto +# review \| auto/);                                       // the comment survived
-  assert.equal(w.commits.length, 1); assert.match(w.commits[0].message, /^dashboard: publish\.mode=auto; limits\.max_new_per_day=9/);
+  assert.match(w.files["config/newsbot.yaml"], /on_sensitive: reject +# publish \| reject/);                                       // the comment survived
+  assert.equal(w.commits.length, 1); assert.match(w.commits[0].message, /^dashboard: publish\.on_sensitive=reject; limits\.max_new_per_day=9/);
   assert.deepEqual(w.dispatches.map((x) => x.workflow), ["validate-config"]);
-  r = await c("/api/settings", { method: "POST", body: { changes: [{ file: "config/newsbot.yaml", kind: "field", path: ["publish", "mode"], value: "review" }], versions: { "config/newsbot.yaml": sha } } });
+  r = await c("/api/settings", { method: "POST", body: { changes: [{ file: "config/newsbot.yaml", kind: "field", path: ["publish", "on_sensitive"], value: "publish" }], versions: { "config/newsbot.yaml": sha } } });
   assert.equal(r.status, 409);                                                                                       // sha is stale now
-  for (const bad of [{ path: ["limits", "feed_workers"], value: 99 }, { path: ["publish", "mode"], value: "yolo" }, { path: ["nope", "x"], value: 1 }, { path: ["site", "base_url"], value: "http://x" }]) {
+  for (const bad of [{ path: ["limits", "feed_workers"], value: 99 }, { path: ["publish", "on_sensitive"], value: "yolo" }, { path: ["nope", "x"], value: 1 }, { path: ["site", "base_url"], value: "http://x" }]) {
     const x = await c("/api/settings", { method: "POST", body: { changes: [{ file: "config/newsbot.yaml", kind: "field", ...bad }] } });
     assert.equal(x.status, 400, JSON.stringify(bad));
   }
@@ -170,7 +171,7 @@ test("keys: encrypted for GitHub's key, tested first, rejected keys not stored u
   r = await c("/api/keys/set", { method: "POST", body: { name: "WORKFLOW_PAT", value: "ghp_bad", force: true } });
   assert.equal(r.status, 200); assert.equal(openSealed(w, w.secrets.WORKFLOW_PAT.encrypted_value), "ghp_bad");
   r = await c("/api/keys/set", { method: "POST", body: { name: "TELEGRAM_BOT_TOKEN", value: "12345678:" + "A".repeat(35) } });
-  assert.equal((await j(r)).after, "setup-approve");
+  assert.equal((await j(r)).after, null);
   r = await c("/api/keys/test", { method: "POST", body: { name: "TELEGRAM_CHAT_ID", value: "abc" } });
   assert.equal((await j(r)).ok, false);
   for (const bad of [{ name: "lower", value: "x" }, { name: "GITHUB_TOKEN", value: "x" }, { name: "OK_NAME", value: "" }, { name: "OK_NAME", value: "a\nb" }, { name: "A", value: "x" }]) {
@@ -185,32 +186,20 @@ test("keys: encrypted for GitHub's key, tested first, rejected keys not stored u
   void env;
 });
 
-test("drafts: list, open, approve with edits, gate-failed needs the tick, reject, save", async () => {
-  const { c, w } = await session();
-  const l = await j(await c("/api/drafts?lang=en"));
+test("rejected archive: list and open (read only), bad names refused, no write routes any more", async () => {
+  const { c } = await session();
+  const l = await j(await c("/api/rejected?lang=en"));
   assert.equal(l.total, 2); assert.ok(l.items.some((i) => i.slug === "dead-actor" && i.head.includes("Actor dies")));
-  assert.equal((await j(await c("/api/drafts?lang=en&q=gate"))).matched, 1);
-  const d = await j(await c("/api/draft?lang=en&slug=dead-actor"));
-  assert.equal(d.title, "Actor dies"); assert.match(d.pending, /sensitive:death/); assert.match(d.html, /<h3>Body<\/h3>/);
-  assert.equal((await c("/api/draft?lang=en&slug=..%2Fx")).status, 400);
-  const edits = { title: "Actor dies at 93", summary: "He died.", body: "Fixed text." };
-  let r = await j(await c("/api/draft", { method: "POST", body: { lang: "en", slug: "dead-actor", action: "approve", edits, version: d.version } }));
-  assert.equal(r.key, "approved");
-  assert.ok(!("pending/en/dead-actor.md" in w.files)); assert.match(w.files["content/en/dead-actor.md"], /^title: "Actor dies at 93"$/m);
-  assert.ok(!w.files["content/en/dead-actor.md"].includes("pending:")); assert.equal(w.dispatches.at(-1).workflow, "deploy");
-  r = await j(await c("/api/draft", { method: "POST", body: { lang: "en", slug: "bad-gate", action: "approve", edits } }));
-  assert.equal(r.key, "gate"); assert.ok("pending/en/bad-gate.md" in w.files);
-  r = await j(await c("/api/draft", { method: "POST", body: { lang: "en", slug: "bad-gate", action: "save", edits: { ...edits, title: "Fixed name" } } }));
-  assert.equal(r.key, "saved"); assert.match(w.files["pending/en/bad-gate.md"], /^title: "Fixed name"$/m); assert.ok(w.files["pending/en/bad-gate.md"].includes("pending:"));
-  r = await j(await c("/api/draft", { method: "POST", body: { lang: "en", slug: "bad-gate", action: "approve", edits, ack: true } }));
-  assert.equal(r.key, "approved");
-  r = await j(await c("/api/draft", { method: "POST", body: { lang: "bn", slug: "one", action: "reject" } }));
-  assert.equal(r.key, "rejected"); assert.ok(!("pending/bn/one.md" in w.files));
-  assert.equal((await c("/api/draft", { method: "POST", body: { lang: "en", slug: "x", action: "approve", edits: { title: "", summary: "s", body: "b" } } })).status, 400);
-  assert.equal((await j(await c("/api/draft", { method: "POST", body: { lang: "en", slug: "gone", action: "reject" } }))).key, "gone");
+  assert.equal((await j(await c("/api/rejected?lang=en&q=gate"))).matched, 1);
+  const d = await j(await c("/api/rejected-item?lang=en&slug=dead-actor"));
+  assert.equal(d.title, "Actor dies"); assert.match(d.rejected, /sensitive:death/); assert.match(d.html, /<h3>Body<\/h3>/);
+  assert.equal((await c("/api/rejected-item?lang=en&slug=..%2Fx")).status, 400);
+  assert.equal((await c("/api/rejected-item?lang=en&slug=nope")).status, 404);
+  for (const path of ["/api/drafts", "/api/prs"]) assert.equal((await c(path)).status, 404, path);
+  for (const path of ["/api/draft", "/api/pr"]) assert.equal((await c(path, { method: "POST", body: {} })).status, 404, path);
 });
 
-test("live articles: edit and hide/show redeploy the site; PRs can be merged or closed", async () => {
+test("live articles: edit and hide/show redeploy the site", async () => {
   const { c, w } = await session();
   const a = await j(await c("/api/article?lang=en&slug=live-one"));
   assert.equal(a.title, "Live one"); assert.equal(a.hidden, false);
@@ -223,10 +212,6 @@ test("live articles: edit and hide/show redeploy the site; PRs can be merged or 
   assert.ok(!w.files["content/en/live-one.md"].includes("draft:"));
   assert.equal((await j(await c("/api/article", { method: "POST", body: { lang: "en", slug: "live-one", action: "show" } }))).key, "nochange");
   assert.equal((await c("/api/article", { method: "POST", body: { lang: "en", slug: "live-one", action: "save", edits: { title: "T", summary: "S", body: "B" }, version: "stale" } })).status, 409);
-  assert.equal((await j(await c("/api/prs"))).prs[0].number, 7);
-  await c("/api/pr", { method: "POST", body: { number: 7, action: "merge" } }); assert.equal(w.merged, 7);
-  await c("/api/pr", { method: "POST", body: { number: 7, action: "close" } }); assert.equal(w.closed, 7);
-  assert.equal((await c("/api/pr", { method: "POST", body: { number: "7", action: "merge" } })).status, 400);
 });
 
 test("workflows: only the allow-listed ones can be started; decisions and errors never leak secrets", async () => {

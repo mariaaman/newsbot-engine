@@ -1,4 +1,4 @@
-"""CLI: python -m newsbot run --mode auto|review|dry-run [--brain DIR]."""
+"""CLI: python -m newsbot run --mode auto|dry-run [--brain DIR]."""
 from __future__ import annotations
 
 import argparse
@@ -25,7 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version=__version__)
     sub = p.add_subparsers(dest="cmd", required=True)
     run = sub.add_parser("run", help="run the hourly pipeline once")
-    run.add_argument("--mode", choices=["auto", "review", "dry-run"], default="dry-run")
+    run.add_argument("--mode", choices=["auto", "dry-run"], default="dry-run")
     run.add_argument("--brain", default=os.environ.get("NEWSBOT_BRAIN_DIR", "brain"))
     run.add_argument("--log-level", default="INFO")
     run.add_argument("--report", default=os.environ.get("NEWSBOT_REPORT"),
@@ -48,10 +48,9 @@ def build_parser() -> argparse.ArgumentParser:
     md.add_argument("--brain", default=os.environ.get("NEWSBOT_BRAIN_DIR", "brain"))
     lr = sub.add_parser("learning-report", help="print what the engine learned and which failures it could not fix (state/learning/)")
     lr.add_argument("--brain", default="brain")
-    nt = sub.add_parser("notify", help="send the run report and review requests to Telegram (never fails the run)")
+    nt = sub.add_parser("notify", help="send the run report and the article list to Telegram (never fails the run)")
     nt.add_argument("--brain", default=os.environ.get("NEWSBOT_BRAIN_DIR", "brain"))
     nt.add_argument("--report", default=os.environ.get("NEWSBOT_REPORT"))
-    nt.add_argument("--pr-url-file", default=os.environ.get("NEWSBOT_PR_URL_FILE"))
     nt.add_argument("--workflow", default="hourly")
     nt.add_argument("--log-level", default="INFO")
     return p
@@ -80,7 +79,7 @@ def run_pipeline(cfg: "Config", mode: str, brain: Path, now=None, embedder=None,
     log = logging.getLogger("newsbot.run")
     dry = mode == "dry-run"
     now = now or (DRY_RUN_NOW if dry else utcnow())     # dry-run lives on the fixtures' clock, or every sample story looks old
-    effective = mode          # the CLI/workflow mode wins; publish.mode in config is only the default for the workflow
+    effective = mode
     from newsbot.diag import DIAG
     from newsbot import learned
     learned.configure(brain, write=not dry)             # learned rules are read always, written (state/learning/) only in a real run
@@ -134,7 +133,7 @@ def run_pipeline(cfg: "Config", mode: str, brain: Path, now=None, embedder=None,
     if not dry and articles:
         from newsbot.publish import record_new_stories
         record_new_stories(state_dir, decisions, {s.cluster.story_id: s.cluster for s in scored}, factsheets,
-                           articles, now, effective)
+                           articles, now)
     from newsbot.update import run_updates
     updates = run_updates(decisions, scored, cfg, brain, mode, llm, article_fetcher or _article_fetcher(mode), embedder, now) \
         if llm else {}
@@ -234,7 +233,7 @@ def gather_story_facts(decisions, scored, cfg, brain: Path, mode: str, llm, arti
 
 
 def write_story_articles(decisions, factsheets, cfg, brain: Path, mode: str, llm, embedder, now) -> dict:
-    """Stage 8-9: one article per routed language, QA gates, then content/ or pending/ (never in dry-run)."""
+    """Stage 8-9: one article per routed language, QA gates, then content/ or rejected/ (never in dry-run)."""
     from newsbot.articles import produce_articles, write_outputs
     log = logging.getLogger("newsbot.articles")
     out = {}
@@ -338,7 +337,7 @@ def _main(argv: list[str] | None = None) -> int:
         return 0
     if args.cmd == "notify":                                  # stdlib only: works even if the engine's dependencies are missing
         from newsbot.notify import notify_cmd
-        return notify_cmd(brain, args.report, args.pr_url_file, args.workflow)
+        return notify_cmd(brain, args.report, args.workflow)
     if args.cmd == "run" and args.mode == "dry-run" and not brain.is_dir():
         brain = TEMPLATE  # dry-run must work offline with no brain repo checked out
     if args.cmd == "health":

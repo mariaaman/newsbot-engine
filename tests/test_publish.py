@@ -13,6 +13,7 @@ from newsbot.llm import build_llm, load_llm_settings
 from newsbot.llm.dryrun import dry_run_provider
 from newsbot.models import Item, Story, iso
 from newsbot.publish import (content_fingerprint, deploy_needed, mark_deployed, reconcile, record_new_stories)
+from newsbot.state import save_stories
 from newsbot.state import load_stories, local_day_start, new_today
 from tests.helpers import NOW, TEMPLATE, make_cfg
 from tests.test_pipeline_m1 import _bank_story, by_title, run
@@ -21,7 +22,7 @@ CFG = make_cfg()
 
 
 def _c(**kw):
-    return {"published": 0, "rejected": 0, "closed": 0, "updates_applied": 0, "updates_rejected": 0, **kw}
+    return {"published": 0, "rejected": 0, "closed": 0, **kw}
 FS = {fs.story_id: fs for fs in load_fact_sheets()}["ev-metro"]
 
 
@@ -35,13 +36,13 @@ def _cluster(fs):
     return cluster_items(items, CFG)[0]
 
 
-def _record(d, mode, route=("en", "bn")):
+def _record(d, _unused="auto", route=("en", "bn")):
     results = produce_articles(FS, list(route), CFG, None, _llm(), recent_by_lang={"en": [], "bn": []})
     write_outputs(d, FS, results, NOW)
     dec = Decision(FS.story_id, "NEW", "trending_and_verified_breadth", list(route), 1.0)
     cl = _cluster(FS)
     ids = record_new_stories(Path(d) / "state", [dec], {FS.story_id: cl}, {FS.story_id: FS},
-                             {FS.story_id: results}, NOW, mode)
+                             {FS.story_id: results}, NOW)
     return ids, results, cl
 
 
@@ -59,75 +60,55 @@ def test_record_auto_marks_published_and_counts_toward_the_daily_cap():
         assert new_today(load_stories(Path(d) / "state"), local_day_start(NOW, 6)) == 1
 
 
-def test_record_review_mode_is_awaiting_review_and_still_uses_the_cap():
-    with tempfile.TemporaryDirectory() as d:
-        _record(d, "review")
-        stories = load_stories(Path(d) / "state")
-        v = stories[FS.story_id].versions["en"]
-        assert v["state"] == "awaiting_review" and v["published_at"] == ""
-        assert new_today(stories, local_day_start(NOW, 6)) == 1      # unreviewed PRs cannot pile up without limit
-
-
-def test_pending_articles_are_recorded_and_queued_or_failed_are_not():
+def test_rejected_articles_are_recorded_as_rejected_and_queued_or_failed_are_not():
     with tempfile.TemporaryDirectory() as d:
         s = Path(d) / "state"
         art = {"slug": "x-slug"}
-        res = {"en": ArticleResult("en", "pending", art), "bn": ArticleResult("bn", "queued_budget")}
+        res = {"en": ArticleResult("en", "rejected", art), "bn": ArticleResult("bn", "queued_budget")}
         dec = Decision("st-a", "NEW", "r", ["en", "bn"], 1.0)
-        assert record_new_stories(s, [dec], {}, {}, {"st-a": res}, NOW, "review") == ["st-a"]
+        assert record_new_stories(s, [dec], {}, {}, {"st-a": res}, NOW) == ["st-a"]
         st = load_stories(s)["st-a"]
-        assert list(st.versions) == ["en"] and st.versions["en"]["state"] == "pending"
+        assert list(st.versions) == ["en"] and st.versions["en"]["state"] == "rejected" and st.status == "closed"
+        assert new_today(load_stories(s), local_day_start(NOW, 6)) == 0           # cancelled drafts do not use up the daily cap
         none = {"en": ArticleResult("en", "queued_budget"), "bn": ArticleResult("bn", "write_failed")}
         dec2 = Decision("st-b", "NEW", "r", ["en", "bn"], 1.0)
-        assert record_new_stories(s, [dec2], {}, {}, {"st-b": none}, NOW, "auto") == []   # retried next hour
+        assert record_new_stories(s, [dec2], {}, {}, {"st-b": none}, NOW) == []   # retried next hour
         assert "st-b" not in load_stories(s)
         # a known story is never overwritten, and UPDATE decisions are ignored (M7)
         up = Decision("st-a", "UPDATE", "r", ["en"], 1.0)
-        assert record_new_stories(s, [dec, up], {}, {}, {"st-a": res}, NOW, "auto") == []
+        assert record_new_stories(s, [dec, up], {}, {}, {"st-a": res}, NOW) == []
 
 
 def test_gate_does_not_update_a_story_that_has_nothing_live():
     cfg = make_cfg()
     st = _bank_story(cfg, 4)
-    st.versions = {"en": {"url": "/en/x", "state": "awaiting_review", "published_at": ""}}
+    st.versions = {"en": {"url": "/en/x", "state": "rejected", "published_at": ""}}
     scored, dec, *_ = run(cfg, known={st.story_id: st})
     d, _ = by_title(dec, scored, "raises policy rate")
-    assert d.action == "SKIP" and d.reason == "awaiting_review"
+    assert d.action == "SKIP" and d.reason == "nothing_live"
     st.versions["en"]["state"] = "published"
     scored, dec, *_ = run(cfg, known={st.story_id: st})
     assert by_title(dec, scored, "raises policy rate")[0].action == "UPDATE"
 
 
-def test_reconcile_publishes_merged_prs_and_rejects_stale_or_deleted():
+def test_reconcile_turns_old_waiting_versions_into_published_or_rejected_and_closes_dead_stories():
     with tempfile.TemporaryDirectory() as d:
         brain, state = Path(d), Path(d) / "state"
-        ids, results, _ = _record(d, "review")
-        slug = results["en"].article["slug"]
-        # PR merged for en (file is on main), bn still waiting and young
-        (brain / "content" / "bn" / f"{results['bn'].article['slug']}.md").unlink()
+        ids, results, _ = _record(d)
+        stories = load_stories(state)
+        for v in stories[FS.story_id].versions.values():
+            v["state"] = "awaiting_review"                                   # data written by an older version
+        save_stories(state, stories)
+        (brain / "content" / "bn" / f"{results['bn'].article['slug']}.md").unlink()   # bn never reached main
         counts = reconcile(brain, NOW + timedelta(hours=1))
         st = load_stories(state)[FS.story_id]
-        assert counts["published"] == 1 and st.versions["en"]["state"] == "published"
-        assert st.versions["en"]["published_at"] and st.versions["bn"]["state"] == "awaiting_review"
-        # 80 hours later the unmerged bn PR is treated as rejected; the story stays open (en is live)
-        reconcile(brain, NOW + timedelta(hours=80))
-        st = load_stories(state)[FS.story_id]
-        assert st.versions["bn"]["state"] == "rejected" and st.status == "developing"
-        assert (brain / "content" / "en" / f"{slug}.md").is_file()
-
-
-def test_reconcile_closes_story_when_every_version_is_rejected_and_pending_follows_the_draft():
-    with tempfile.TemporaryDirectory() as d:
-        brain = Path(d)
-        art = {"slug": "p-slug"}
-        dec = Decision("st-p", "NEW", "r", ["en"], 1.0)
-        record_new_stories(brain / "state", [dec], {}, {}, {"st-p": {"en": ArticleResult("en", "pending", art)}}, NOW, "review")
-        (brain / "pending" / "en").mkdir(parents=True)
-        (brain / "pending" / "en" / "p-slug.md").write_text("---\ntitle: t\n---\nbody\n", encoding="utf-8")
-        assert reconcile(brain, NOW + timedelta(hours=200)) == _c(published=0, rejected=0, closed=0)   # draft still there
-        (brain / "pending" / "en" / "p-slug.md").unlink()                                                      # owner deleted it
-        assert reconcile(brain, NOW + timedelta(hours=201)) == _c(published=0, rejected=1, closed=1)
-        assert load_stories(brain / "state")["st-p"].status == "closed"
+        assert counts == _c(published=1, rejected=1) and st.versions["en"]["state"] == "published" and st.versions["bn"]["state"] == "rejected"
+        assert st.status == "developing"                                      # en is live, the story stays open
+        st.versions["en"]["state"] = "pending"
+        (brain / "content" / "en" / f"{results['en'].article['slug']}.md").unlink()
+        save_stories(state, {FS.story_id: st})
+        assert reconcile(brain, NOW + timedelta(hours=2)) == _c(rejected=1, closed=1)
+        assert load_stories(state)[FS.story_id].status == "closed"
 
 
 def test_old_state_without_version_state_still_counts_as_published():
@@ -150,8 +131,8 @@ def test_deploy_fingerprint_tracks_content_and_site_config_only():
         fp = mark_deployed(brain, NOW)
         assert not deploy_needed(brain) and json.loads((brain / "state" / "deployed.json").read_text())["fingerprint"] == fp
         (brain / "state" / "decisions.jsonl").write_text("{}\n")   # state churn does not trigger a deploy
-        (brain / "pending").mkdir()
-        (brain / "pending" / "x.md").write_text("draft")           # neither do drafts
+        (brain / "rejected").mkdir()
+        (brain / "rejected" / "x.md").write_text("draft")          # neither do cancelled drafts
         assert not deploy_needed(brain)
         (brain / "content" / "en" / "b.md").write_text("---\ntitle: b\n---\ny\n", encoding="utf-8")
         assert deploy_needed(brain)                                # a merged article does
@@ -177,7 +158,7 @@ def test_cli_deploy_commands():
 
 
 def test_real_mode_run_records_stories_so_the_next_hour_does_not_repeat_them():
-    """review/auto mode end to end offline: fixture feeds + fixture articles + mock LLM, real file writes."""
+    """auto mode end to end offline: fixture feeds + fixture articles + mock LLM, real file writes."""
     import shutil
     from datetime import timedelta
     from newsbot.cli import FIXTURES, run_pipeline
@@ -189,20 +170,20 @@ def test_real_mode_run_records_stories_so_the_next_hour_does_not_repeat_them():
         shutil.copytree(TEMPLATE, brain)
         kw = dict(llm=_llm(), embedder=None, article_fetcher=fixture_article_fetcher(FIXTURES / "articles"),
                   feed_fetcher=fixture_fetcher(FIXTURES / "feeds", cfg.sources))
-        r1 = run_pipeline(cfg, "review", brain, now=NOW, **kw)
-        assert r1["mode"] == "review" and r1["NEW"] >= 1 and r1["articles"]
+        r1 = run_pipeline(cfg, "auto", brain, now=NOW, **kw)
+        assert r1["mode"] == "auto" and r1["NEW"] >= 1 and r1["articles"]
         stories = load_stories(brain / "state")
         assert set(stories) == {sid for sid, res in r1["articles"].items()
-                                if any(x.status in ("publish", "pending") for x in res.values())} and stories
+                                if any(x.status in ("publish", "rejected") for x in res.values())} and stories
         for st in stories.values():
-            assert all(v["state"] in ("awaiting_review", "pending") for v in st.versions.values())
+            assert all(v["state"] in ("published", "rejected") for v in st.versions.values())
         assert (brain / "state" / "decisions.jsonl").is_file()
         # next hour: the same fixture items must not be NEW again, and nothing new is written
         kw["llm"] = _llm()
-        r2 = run_pipeline(cfg, "review", brain, now=NOW + timedelta(hours=1), **kw)
-        for sid in stories:            # recorded stories are not NEW again; they wait for review (nothing live to update)
+        r2 = run_pipeline(cfg, "auto", brain, now=NOW + timedelta(hours=1), **kw)
+        for sid in stories:            # recorded stories are not NEW again
             d2 = next(x for x in r2["decisions"] if x.story_id == sid)
-            assert (d2.action, d2.reason) == ("SKIP", "awaiting_review")
+            assert d2.action != "NEW"
         assert not r2["articles"] and set(load_stories(brain / "state")) == set(stories)
         # a story that could not be verified (insufficient_sources) is not recorded; it waits out the cool-down
         # (limits.insufficient_sources_cooldown_hours) with no fetch and no LLM spend, then is retried (test_m8)

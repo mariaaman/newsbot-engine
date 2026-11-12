@@ -56,19 +56,19 @@ def _run(mock):
 def test_repair_cures_an_invented_name_once():
     mock, calls = _mock("Zorblax Quimby opened the line [S1].")
     r = _run(mock)
-    assert calls == [False, True] and r.status in ("publish", "pending") and "unsupported_name" not in r.qa.failures
+    assert calls == [False, True] and r.status in ("publish", "rejected") and "unsupported_name" not in r.qa.failures
     assert "Zorblax" not in r.article["body_markdown"]
 
 
 def test_failed_repair_keeps_the_gate_closed_and_asks_at_most_max_repair_attempts_times():
     mock, calls = _mock("Zorblax Quimby opened the line [S1].", "Zorblax Quimby opened the line [S1].")
     r = _run(mock)
-    assert calls == [False, True, True] and "unsupported_name" in r.qa.failures and r.status == "pending"   # 1 write + 2 repairs
+    assert calls == [False, True, True] and "unsupported_name" in r.qa.failures and r.status == "rejected"   # 1 write + 2 repairs
     off = make_cfg(qa={"max_repair_attempts": 0, "autofix": False})
     mock, calls = _mock("Zorblax Quimby opened the line [S1].")
     llm = build_llm(load_llm_settings(TEMPLATE), None, dry_run=True, mock=mock)
     r = produce_articles(STORIES["ev-metro"], ["en"], off, None, llm, recent_by_lang={"en": []})["en"]
-    assert calls == [False] and r.status == "pending"                                                       # repair switched off
+    assert calls == [False] and r.status == "rejected"                                                       # repair switched off
 
 
 def test_offending_terms_lists_names_and_numbers():
@@ -105,7 +105,7 @@ def test_readiness_scorecard_prints_counts_only_and_blocks_on_missing_steps():
         (brain / "state").mkdir(exist_ok=True)
         r = subprocess.run([sys.executable, str(ROOT / "scripts" / "readiness.py"), str(brain), "--engine-dir", str(ROOT)],
                            capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"}, timeout=60)
-        assert r.returncode == 1 and "REVIEW-MODE VERDICT: NOT READY" in r.stdout and "AUTO-MODE VERDICT: NOT YET" in r.stdout
+        assert r.returncode == 1 and "VERDICT: NOT READY" in r.stdout
         assert "://" not in r.stdout          # counts and status words only, no URLs
 
 

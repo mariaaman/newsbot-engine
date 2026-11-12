@@ -45,7 +45,7 @@ const go = async (hash) => { location.hash = hash; winListeners.hashchange(); aw
 const click = async (pred, text) => { const b = view.find((e) => e.tag === "button" && pred(e) && e.text().includes(text))[0]; assert.ok(b, "button: " + text); for (const fn of b.listeners.click || []) await fn({ target: b }); await tick(); };
 
 test("every screen renders without an error card", async () => {
-  for (const hash of ["#/", "#/drafts", "#/articles", "#/settings", "#/keys", "#/llm", "#/runs", "#/more", "#/draft/en/dead-actor", "#/draft/en/bad-gate", "#/article/en/live-one"]) {
+  for (const hash of ["#/", "#/rejected", "#/articles", "#/settings", "#/keys", "#/llm", "#/runs", "#/more", "#/rejecteditem/en/dead-actor", "#/rejecteditem/en/bad-gate", "#/article/en/live-one"]) {
     await go(hash);
     const text = view.text();
     assert.ok(!view.find((e) => e.className.includes("card bad") && e.text().includes("ত্রুটি")).length, `${hash}: ${text.slice(0, 200)}`);
@@ -53,22 +53,20 @@ test("every screen renders without an error card", async () => {
   }
 });
 
-test("home shows the mode, counts and the run button works", async () => {
+test("home shows the counts and the run button works", async () => {
   await go("#/");
   const t = view.text();
-  assert.match(t, /review/); assert.match(t, /প্রকাশিত 1/); assert.match(t, /খসড়া 3/); assert.match(t, /অনুপস্থিত সিক্রেট/);
+  assert.doesNotMatch(t, /review|approve/); assert.match(t, /প্রকাশিত 1/); assert.match(t, /বাতিল 3/); assert.match(t, /অনুপস্থিত সিক্রেট/);
   await click(() => true, "এখনই চালান");
   assert.equal(world.dispatches.at(-1).workflow, "hourly");
 });
 
-test("draft screen: preview is shown, the gate checkbox only appears for a failed draft, approve publishes", async () => {
-  await go("#/draft/en/bad-gate");
-  assert.ok(view.find((e) => e.tag === "label" && e.text().includes("আমি নিজে")).length === 1);
-  await go("#/draft/en/dead-actor");
-  assert.ok(view.find((e) => e.tag === "label" && e.text().includes("আমি নিজে")).length === 0);
+test("rejected screen: read only, shows the reasons and the refused names, no approve button", async () => {
+  await go("#/rejecteditem/en/bad-gate");
+  const t = view.text();
+  assert.match(t, /unsupported_name/); assert.match(t, /Zorblax/);
+  assert.ok(view.find((e) => e.tag === "button").length === 0 && view.find((e) => e.tag === "textarea").length === 0);
   assert.ok(view.find((e) => e.className === "preview")[0].innerHTML.includes("<h3>Body</h3>"));
-  await click(() => true, "অনুমোদন ও প্রকাশ");
-  assert.ok("content/en/dead-actor.md" in world.files); assert.ok(!("pending/en/dead-actor.md" in world.files));
 });
 
 test("settings screen: editing a number marks it changed and the save bar writes it", async () => {

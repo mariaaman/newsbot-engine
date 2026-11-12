@@ -1,5 +1,5 @@
 name: readiness
-# Manual go-live scorecard: full tests, config, models (live), dry-run, Hugo build, brain state, recent runs, review-PR stats.
+# Manual go-live scorecard: full tests, config, models (live), dry-run, Hugo build, brain state, recent runs.
 # Prints only counts and status words (the repo is public). Run it, then read the last step ("Scorecard").
 on:
   workflow_dispatch:

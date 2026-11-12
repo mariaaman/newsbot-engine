@@ -1,15 +1,17 @@
+> **v22:** review মোড, `pending/` ও Telegram approve বাতিল। এখন সরাসরি প্রকাশ বা বাতিল (`rejected/`)। নিচের পুরনো অংশে এসবের উল্লেখ ইতিহাস হিসেবে আছে।
+
 # প্রডাকশনে যাওয়ার ধাপ (owner checklist)
 
 ## ১. ফাইল বসানো (ফোন থেকেও চলবে)
 1. `newsbot-engine-update.zip` ইঞ্জিন রিপোর রুটে আপলোড করুন (Auto Unzip চালু থাকলে নিজে খুলে commit করবে)। **আগে ইঞ্জিন, পরে ব্রেইন।**
-2. `newsbot-brain-update.zip` ব্রেইন রিপোর রুটে আপলোড করুন। এতে শুধু কনফিগ আছে, `state/`, `pending/` বা `content/` ছোঁয় না।
+2. `newsbot-brain-update.zip` ব্রেইন রিপোর রুটে আপলোড করুন। এতে শুধু কনফিগ আছে, `state/`, `rejected/` বা `content/` ছোঁয় না।
 3. দুই রিপোতেই `.github/workflows/H` নামের ১ বাইটের ফাইলটি হাতে মুছুন (zip দিয়ে ফাইল মোছা যায় না)।
 4. ইঞ্জিনের Actions-এ `ci` সবুজ হতে হবে।
 
 ## ২. যাচাই
 1. Actions, `setup`, Run workflow: সব লাইন `OK`।
-2. Actions, `readiness`, Run workflow: শেষ ধাপ `Scorecard`-এ `REVIEW-MODE VERDICT: READY` দেখুন। `FAIL` লাইনগুলো ব্লকার।
-3. `hourly` হাতে চালান (mode ফাঁকা = review)। PR এলে GitHub অ্যাপে পড়ে merge/close করুন।
+2. Actions, `readiness`, Run workflow: শেষ ধাপ `Scorecard`-এ `VERDICT: READY` দেখুন। `FAIL` লাইনগুলো ব্লকার।
+3. `hourly` হাতে চালান (mode ফাঁকা = প্রকাশ; কিছু না লিখে ড্রাই-রান করতে `dry-run`)। কোনো লেখা অনুমোদনের অপেক্ষায় থাকে না: পাস করলে প্রকাশ, না পারলে বাতিল হয়ে ব্রেইনের `rejected/`-এ জমা।
 
 ## ৩. কী বদলেছে
 - OpenRouter-এর মৃত মডেল আইডি বাদ; Gemini এখন প্রথম, তারপর Groq, শেষে Workers AI।
@@ -20,7 +22,6 @@
 - `readiness` workflow (নতুন), `unzip.yml` শক্ত করা (শুধু রুটে `.zip` push হলে চলে)।
 
 ## ৪. `auto` মোডে যাওয়ার শর্ত (readiness নিজেই মাপে)
-- অন্তত ২০টি review PR merge হয়েছে, এবং merge-হার ৯০% বা বেশি।
 - সর্বশেষ `hourly` রান সফল।
 - Actions-এর `@v4`/`@v5` ট্যাগ (`VERIFY` মন্তব্য) commit SHA-তে pin করুন।
 
@@ -35,9 +36,9 @@
 - **নিরাপদ ফেচ:** ফিড ও আর্টিকেল ডাউনলোডে প্রতিটি রিডাইরেক্ট যাচাই হয় (শুধু http/https, লোকালহোস্ট/প্রাইভেট/মেটাডেটা আইপি নয়), ফিডের আকারেও সীমা আছে।
 - **ডুপ্লিকেট চেক:** নতুন লেখার `শিরোনাম + সারাংশ` এখন আগের লেখার `শিরোনাম + সারাংশ`-এর সঙ্গে মেলানো হয় (আগে শুধু শিরোনামের সঙ্গে মেলানো হতো, তাই একই ঘটনার ভিন্ন শিরোনামের খসড়া ঢুকে যেত)।
 - **ক্যাটেগরি:** মডেল `business`/`sport`/`tech`-এর মতো প্রতিশব্দ লিখলে নিশ্চিত মিল থাকলে সাইটের নিজের আইডিতে (`economy`/`sports`/`technology`) বদলে যায়। `legal`/`national`-এর মতো অনিশ্চিত মান আগের মতোই গেটে আটকায়।
-- **`scripts/pending_triage.py <brain>`** (ব্রেইনের লোকাল কপিতে চালান, `--list` দিলে ফাইলের নাম দেখায়): `pending/` ড্রাফটকে চার ভাগে সাজায়: পড়ে অনুমোদন / পুনরায় যাচাই / পুনর্লিখন বা বাদ / ডুপ্লিকেট।
+- **(বাতিল, v22)** `pending_triage.py` আর নেই: কোনো `pending/` ধাপ নেই।
 - **`pin-actions` workflow:** Actions ট্যাব থেকে একবার চালান। এটি সব `uses: ...@v4` লাইনকে ওই ট্যাগের আসল commit SHA-তে পিন করে commit করে (`WORKFLOW_PAT` লাগে)। তারপর `ci` ও `readiness` চালান।
-- **Telegram approve Worker:** Cloudflare-এ `EDIT_PIN` secret সেট করুন (ঐচ্ছিক বলা আছে, কিন্তু রাখাই নিরাপদ)। ড্যাশবোর্ডে TOTP চালু করুন।
+- **(বাতিল, v22)** Telegram approve Worker ও তার `EDIT_PIN` আর নেই।
 - **হাতে করণীয়:** দুই রিপো থেকে `unzip.yml` মুছুন কাজ শেষে (এবং `WORKFLOW_PAT` বাতিল করুন), আর AdSense-এর আগে নিজের ডোমেইন বসান (`site.base_url` বদলান)।
 
 ## ৮. অটো-মেরামত ও Adsterra (২০২৬-১০-৩০)

@@ -1,5 +1,5 @@
-"""QA gates (spec section 9). Any hard failure parks the draft in pending/; sensitive topics and low
-confidence also go to pending/ (human review). Nothing here logs article text: gate codes and counts only.
+"""QA gates (spec section 9). Any hard failure that the automatic fixes cannot cure cancels the draft (archived in rejected/); sensitive topics and low
+confidence follow publish.on_sensitive / on_review. Nothing here logs article text: gate codes and counts only.
 
 Conventions the writer prompts must follow (the gates depend on them):
 - body_markdown has H2 sections; the FIRST H2 section is 'what happened' and every paragraph in it
@@ -50,20 +50,17 @@ class QAResult:
 
     @property
     def disposition(self) -> str:
-        return "publish" if not self.failures and not self.review else "pending"
+        return "publish" if not self.failures and not self.review else "rejected"
 
-    def route(self, pub=None) -> tuple[str, str]:
-        """(status, hold): ("publish", "") or ("pending", "pending" | "rejected"), by the publish.on_* settings (config.PublishCfg)."""
+    def route(self, pub=None) -> str:
+        """"publish" or "rejected", by the publish.on_* settings (config.PublishCfg). A gate failure that survived the
+        automatic fixes cancels the draft; sensitive / low-confidence drafts go live unless the setting says reject."""
         if self.failures:
-            return "pending", ("rejected" if getattr(pub, "on_failure", "pending") == "reject" else "pending")
+            return "rejected" if getattr(pub, "on_failure", "reject") == "reject" else "publish"
         sens = [x for x in self.review if x.startswith("sensitive:")]
         other = [x for x in self.review if not x.startswith("sensitive:")]
-        actions = ([getattr(pub, "on_sensitive", "pending")] if sens else []) + ([getattr(pub, "on_review", "pending")] if other else [])
-        if "reject" in actions:
-            return "pending", "rejected"
-        if "pending" in actions:
-            return "pending", "pending"
-        return "publish", ""
+        actions = ([getattr(pub, "on_sensitive", "publish")] if sens else []) + ([getattr(pub, "on_review", "publish")] if other else [])
+        return "rejected" if "reject" in actions else "publish"
 
     def reasons(self) -> list[str]:
         return [*self.failures, *self.review]

@@ -20,7 +20,7 @@ REQUIRED_VARS = ("PAGES_PROJECT", "BRAIN_REPO")
 BRAIN_FILES = ("config/newsbot.yaml", "config/llm.yaml", "config/sources.bn.yaml", "config/sources.en.yaml",
                "prompts/extract.md", "prompts/verify.md", "prompts/write_bn.md", "prompts/write_en.md",
                "prompts/update.md", "prompts/qa_check.md")
-BRAIN_DIRS = ("content/bn", "content/en", "pending", "state")
+BRAIN_DIRS = ("content/bn", "content/en", "state")
 CF = "https://api.cloudflare.com/client/v4"       # VERIFY
 GH = "https://api.github.com"
 Result = tuple[str, str]                            # (OK|FAIL|SKIP, name)
@@ -41,8 +41,6 @@ def check_env(env) -> list[Result]:
     out = [("OK" if env.get(n) else "FAIL", f"secret {n}") for n in REQUIRED_SECRETS]
     out += [("OK" if env.get(n) else "SKIP", f"secret {n} (optional)") for n in OPTIONAL_SECRETS]
     out += [("OK" if env.get(n) else "FAIL", f"variable {n}") for n in REQUIRED_VARS]
-    mode = env.get("PUBLISH_MODE") or "review"
-    out.append(("OK" if mode in ("review", "auto") else "FAIL", "variable PUBLISH_MODE is review or auto"))
     return out
 
 

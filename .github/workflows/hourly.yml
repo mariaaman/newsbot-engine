@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "auto | review | dry-run (empty = the PUBLISH_MODE variable, default review)"
+        description: "auto | dry-run (empty = auto)"
         type: string
         default: ""
 permissions:
@@ -23,14 +23,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      MODE: ${{ inputs.mode || vars.PUBLISH_MODE || 'review' }}
+      MODE: ${{ inputs.mode || 'auto' }}      # auto publishes; dry-run writes nothing
       PAGES_PROJECT: ${{ vars.PAGES_PROJECT }}
       BRAIN_BRANCH: ${{ vars.BRAIN_BRANCH || 'main' }}
     steps:
       - name: Check mode
         id: check_mode
         run: |
-          case "$MODE" in auto|review|dry-run) ;; *) echo "bad mode"; exit 2 ;; esac
+          case "$MODE" in auto|dry-run) ;; *) echo "bad mode"; exit 2 ;; esac
       - name: Checkout engine
         id: checkout_engine
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -70,7 +70,7 @@ jobs:
       - name: Remove the LLM accounts file (it holds API tokens; no later step needs it)
         if: always()
         run: rm -f "${NEWSBOT_CF_ACCOUNTS_FILE:-/nonexistent}"
-      - name: Commit to brain (state, drafts, content or review PR)
+      - name: Commit to brain (state, content, rejected archive)
         id: commit
         # always(): a run that crashed or hit the step timeout must still save what it learned (daily-allowance counters, fact sheets,
         # cool-downs and above all state/diagnostics, which names the failing stage). Without this, a failing run left NO trace in the
@@ -78,9 +78,7 @@ jobs:
         if: always() && env.MODE != 'dry-run' && steps.checkout_brain.outcome == 'success'
         env:
           GH_TOKEN: ${{ secrets.BRAIN_REPO_TOKEN }}
-        run: |
-          export NEWSBOT_PR_URL_FILE="$RUNNER_TEMP/pr_url.txt"
-          bash scripts/brain_commit.sh brain "$MODE"
+        run: bash scripts/brain_commit.sh brain "$MODE"
       - name: Is a deploy needed?
         id: plan
         if: env.MODE != 'dry-run'
@@ -121,7 +119,7 @@ jobs:
         run: |
           python -m newsbot mark-deployed --brain brain
           bash scripts/brain_commit.sh brain state
-      - name: Notify Telegram (every step result and review requests; never fails the run)
+      - name: Notify Telegram (every step result and the article list; never fails the run)
         if: always()
         continue-on-error: true
         env:
@@ -132,4 +130,4 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
           STEP_OUTCOMES: >-
             check_mode=${{ steps.check_mode.outcome }},checkout_engine=${{ steps.checkout_engine.outcome }},checkout_brain=${{ steps.checkout_brain.outcome }},setup_python=${{ steps.setup_python.outcome }},install=${{ steps.install.outcome }},llm_accounts=${{ steps.llm_accounts.outcome }},run=${{ steps.run.outcome }},commit=${{ steps.commit.outcome }},plan=${{ steps.plan.outcome }},hugo=${{ steps.hugo.outcome }},build=${{ steps.build.outcome }},deploy=${{ steps.deploy.outcome }},record=${{ steps.record.outcome }}
-        run: python -m newsbot notify --brain brain --workflow hourly --report "$RUNNER_TEMP/run_report.json" --pr-url-file "$RUNNER_TEMP/pr_url.txt"
+        run: python -m newsbot notify --brain brain --workflow hourly --report "$RUNNER_TEMP/run_report.json"

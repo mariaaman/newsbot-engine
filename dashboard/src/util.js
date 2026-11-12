@@ -46,5 +46,5 @@ export async function unseal(secret, blob) {
 
 export const must = (cond, status, message) => { if (!cond) throw new HttpError(status, message); };
 export const isObj = (x) => x && typeof x === "object" && !Array.isArray(x);
-export const SLUG = /^[^\s/\\"'`<>?#%]{1,200}$/;           // a file stem under pending/ or content/ (Bengali slugs allowed)
+export const SLUG = /^[^\s/\\"'`<>?#%]{1,200}$/;           // a file stem under rejected/ or content/ (Bengali slugs allowed)
 export const LANG = /^[a-z]{2,3}$/;

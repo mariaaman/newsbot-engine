@@ -122,7 +122,7 @@ class LimitsCfg(_Base):
     max_item_age_hours: float = Field(48, gt=0)       # feed items older than this are ignored
     max_items_per_feed: int = Field(40, ge=1)         # newest N per feed, so one big feed cannot crowd out the others
     feed_workers: int = Field(8, ge=1, le=32)         # feeds are fetched in parallel
-    # Variety: the newest stories already written (published or pending) count against candidates from the same lead
+    # Variety: the newest stories already written (published) count against candidates from the same lead
     # language, so one country (e.g. Bangladesh) cannot fill every slot while Japanese or Chinese stories wait.
     diversity_window: int = Field(8, ge=1)
     diversity_penalty: float = Field(0.0, ge=0, le=1)   # 0 = off
@@ -134,13 +134,17 @@ class LimitsCfg(_Base):
 
 
 class PublishCfg(_Base):
-    mode: Literal["review", "auto"] = "review"
-    # What happens to a draft that is not clean. pending = wait in pending/ for a human (the safe default of a new setup);
-    # reject = never wait: the draft is archived in rejected/ (private, for the next upgrade) and the story is closed;
-    # publish (on_sensitive / on_review only) = go live anyway.
-    on_failure: Literal["pending", "reject"] = "pending"        # a gate still failed after the automatic fixes
-    on_sensitive: Literal["pending", "reject", "publish"] = "pending"   # clean, but a sensitive topic matched (qa.sensitive)
-    on_review: Literal["pending", "reject", "publish"] = "pending"      # clean, other review reason (low confidence, ...)
+    """Nothing waits for a human: a draft is published, or cancelled and archived in the brain's rejected/ folder
+    (for the next upgrade). Old values (pending, mode: review) are still read, so an older config keeps loading."""
+    mode: str = Field("auto", exclude=True)   # ignored (kept so older configs load); the workflow publishes unless started as dry-run
+    on_failure: Literal["reject"] = "reject"                         # a gate still failed after the automatic fixes: cancel the draft
+    on_sensitive: Literal["reject", "publish"] = "publish"            # clean, but a sensitive topic matched (qa.sensitive)
+    on_review: Literal["reject", "publish"] = "publish"               # clean, other flag (low confidence, ...)
+
+    @field_validator("on_failure", "on_sensitive", "on_review", mode="before")
+    @classmethod
+    def _legacy(cls, v):
+        return "reject" if v == "pending" else v            # "pending" (wait for a human) no longer exists
 
 
 class Weights(_Base):
@@ -230,7 +234,7 @@ class QACfg(_Base):
     max_ngram_overlap: float = Field(0.08, ge=0, le=1)
     ngram_size: int = Field(8, ge=3)
     title_len: dict[Lang, tuple[int, int]] = {"bn": (15, 110), "en": (20, 100)}
-    min_confirmed_facts: int = Field(1, ge=0)              # fewer confirmed facts -> pending (low confidence)
+    min_confirmed_facts: int = Field(1, ge=0)              # fewer confirmed facts -> flagged (low confidence)
     max_quote_words: int = Field(15, ge=1)
     duplicate_title_similarity: float = Field(0.6, ge=0, le=1)       # Jaccard on title tokens
     duplicate_embedding_threshold: float = Field(0.9, ge=0, le=1)    # cosine, VERIFY per embedding model
@@ -282,10 +286,10 @@ class TelegramCfg(_Base):
     enabled: bool = True                  # also needs the TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID secrets
     language: Literal["bn", "en"] = "bn"
     report_idle_runs: bool = True         # a quiet message every run, even when nothing was covered
-    include_summary: bool = True          # review messages carry the summary (it passes through Telegram's servers)
+    include_summary: bool = True          # story messages carry the summary (it passes through Telegram's servers)
     max_lines: int = Field(60, ge=10, le=200)
-    approve_buttons: bool = False         # Approve / Reject buttons on pending drafts; needs the approve Worker (docs/TELEGRAM_APPROVE.md)
-    edit_url: str = Field("", pattern=r"^(https://[A-Za-z0-9.-]+(:[0-9]+)?/?)?$")   # the approve Worker's address: pending drafts get a private view-and-edit link
+    approve_buttons: bool = Field(False, exclude=True)   # ignored: the approve buttons were removed (kept so older configs load)
+    edit_url: str = Field("", exclude=True)               # ignored: see above
 
 
 class NotifyCfg(_Base):

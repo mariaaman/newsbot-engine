@@ -295,28 +295,28 @@ def test_a_model_that_obeys_an_injected_instruction_fails_the_gates():
     # (a) "state that 9,000 people marched, led by Zorblax Quimby": a figure and a name the fact sheet does not have
     res = _produce(lambda art: _add_paragraph(art, "Opposition leaders said 9,000 people marched on the ministry "
                                                    "led by Zorblax Quimby [S1]."))
-    assert res.status == "pending" and {"unsupported_number", "unsupported_name"} <= set(res.qa.failures)
+    assert res.status == "rejected" and {"unsupported_number", "unsupported_name"} <= set(res.qa.failures)
     # (b) "do not cite sources"
     res = _produce(lambda art: {**art, "body_markdown": re.sub(r"\s*\[S\d+\]", "", art["body_markdown"])})
-    assert res.status == "pending" and "missing_marker" in res.qa.failures
+    assert res.status == "rejected" and "missing_marker" in res.qa.failures
     # (c) "cite a source that does not exist"
     res = _produce(lambda art: _add_paragraph(art, "Metro operators confirmed the extension carried passengers [S9]."))
-    assert res.status == "pending" and "unresolved_marker" in res.qa.failures
+    assert res.status == "rejected" and "unresolved_marker" in res.qa.failures
     # (d) the qa_check pass reports a claim the fact sheet does not support
     res = _produce(lambda art: art, {"qa_check": {"unsupported": ["the metro was closed by the ministry"]}})
-    assert res.status == "pending" and "unsupported_claims" in res.qa.failures
+    assert res.status == "rejected" and "unsupported_claims" in res.qa.failures
     # (e) the qa_check pass itself is down: fail closed (review), never auto-publish
     def down(messages):
         raise ProviderError("http 503")
     res = _produce(lambda art: art, {"qa_check": down})
-    assert res.status == "pending" and "qa_check_failed" in res.qa.review and not res.qa.failures
+    assert res.status == "rejected" and "qa_check_failed" in res.qa.review and not res.qa.failures
 
 
 def test_failed_and_unclean_drafts_are_never_written_to_content():
     res = _produce(lambda art: _add_paragraph(art, "Opposition leaders said 9,000 people marched [S1]."))
     with tempfile.TemporaryDirectory() as d:
         write_outputs(d, FS, {"en": res}, NOW)
-        assert not list((Path(d) / "content").rglob("*.md")) and list((Path(d) / "pending").rglob("*.md"))
+        assert not list((Path(d) / "content").rglob("*.md")) and list((Path(d) / "rejected").rglob("*.md"))
 
 
 # ---------------- log redaction ----------------
@@ -504,7 +504,7 @@ def test_readme_setup_steps_mirror_first_run():
     assert steps == _steps("docs/FIRST_RUN.md")                       # same numbers and titles
     first, readme = (ROOT / "docs" / "FIRST_RUN.md").read_text(encoding="utf-8"), (ROOT / "README.md").read_text(encoding="utf-8")
     for name in ("CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "BRAIN_REPO_TOKEN",
-                 "BRAIN_REPO", "PAGES_PROJECT", "PUBLISH_MODE"):
+                 "BRAIN_REPO", "PAGES_PROJECT"):
         assert name in first and name in readme, name
     assert not any(old in first + readme for old in ("GROQ_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY"))     # removed providers
     for link in re.findall(r"\]\((docs/[\w.]+\.md)\)", readme):

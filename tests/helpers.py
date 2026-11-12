@@ -25,7 +25,7 @@ DEFAULTS = {
                "max_sources_per_story": 5, "routing_min_domains_per_language": 2,
                "max_items_per_run": 400, "max_run_minutes": 20, "stable_after_hours": 48, "closed_after_days": 7,
                "min_update_fact_words": 5, "insufficient_sources_cooldown_hours": 3},
-    "publish": {"mode": "review"},
+    "publish": {"mode": "auto", "on_failure": "reject", "on_sensitive": "reject", "on_review": "reject"},
     "clustering": {"lexical_threshold": 0.2, "embedding_threshold": 0.78,
                    "story_match_threshold": 0.25, "min_shared_tokens": 2},
     "scoring": {"threshold": 0.6, "per_language_threshold": {},
@@ -44,7 +44,7 @@ DEFAULTS = {
     "sensitive": {"keywords": {}},
     "ads": {"enabled": False, "publisher_id": "", "consent_required": False, "slots": {}},
     "notify": {"telegram": {"enabled": True, "language": "bn", "report_idle_runs": True, "include_summary": True,
-                            "max_lines": 60, "approve_buttons": False, "edit_url": ""}},
+                            "max_lines": 60}},
 }
 
 

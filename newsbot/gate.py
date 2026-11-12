@@ -98,10 +98,7 @@ def decide(scored: list[Scored], known: dict[str, Story], cfg, now: datetime,
                 decisions.append(mk("SKIP", "story_closed"))
                 continue
             if not any(v.get("state", "published") == "published" for v in story.versions.values()):
-                decisions.append(mk("SKIP", "awaiting_review"))     # nothing live yet to update (PR / pending draft)
-                continue
-            if any(v.get("update_state") for v in story.versions.values()):
-                decisions.append(mk("SKIP", "update_awaiting_review"))   # an earlier update is still in a PR / pending
+                decisions.append(mk("SKIP", "nothing_live"))        # every version was cancelled: nothing live to update
                 continue
             last = parse_ts(story.last_updated or story.first_seen)
             routed = route_for(s, cfg)

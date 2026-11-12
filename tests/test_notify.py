@@ -25,7 +25,7 @@ from tests.helpers import DEFAULTS, NOW, ROOT, TEMPLATE, make_cfg, mock_embedder
 from tests.test_m8 import capture_logs, log_lines
 from tests.test_workflows import WF_DIR, _script, _setup, _write_run_output, load, steps
 
-CFG = make_cfg()
+CFG = make_cfg(publish={"on_sensitive": "publish", "on_review": "publish"})
 TOKEN = "123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"          # fake, but token-shaped
 CHAT = "-1001234567890"
 ENV = {"TELEGRAM_BOT_TOKEN": TOKEN, "TELEGRAM_CHAT_ID": CHAT, "BRAIN_REPO": "owner/newsbot-brain",
@@ -47,7 +47,7 @@ class Fake:
         return [p["text"] for _, p in self.calls]
 
 
-def run_with_report(mode="review", fail_feed=False):
+def run_with_report(mode="auto", fail_feed=False):
     llm = build_llm(load_llm_settings(TEMPLATE), None, dry_run=True, mock=dry_run_provider())
     base = fixture_fetcher(FIXTURES / "feeds", CFG.sources)
     bbc = next(s.url for s in CFG.sources if s.name == "BBC News World")
@@ -73,17 +73,13 @@ def brain_with(tg: dict | None = None) -> Path:
     return d
 
 
-def notify(report, env=None, brain=None, pr_url=None, transport=None, sleeps=None):
+def notify(report, env=None, brain=None, transport=None, sleeps=None):
     tmp = Path(tempfile.mkdtemp())
     rp = tmp / "r.json"
     if report is not None:
         report.save(rp)
-    pf = None
-    if pr_url is not None:
-        pf = tmp / "pr.txt"
-        pf.write_text(pr_url + "\n", encoding="utf-8")
     tr = transport or Fake()
-    rc = nt.notify_cmd(brain or brain_with(), str(rp), str(pf) if pf else None, "hourly", env=ENV if env is None else env, transport=tr,
+    rc = nt.notify_cmd(brain or brain_with(), str(rp), "hourly", env=ENV if env is None else env, transport=tr,
                        sleep=(sleeps.append if sleeps is not None else (lambda s: None)), now=NOW)
     return rc, tr
 
@@ -102,14 +98,14 @@ def test_run_report_has_an_ok_fail_error_skip_event_for_every_step():
     steps_seen = {e["step"] for e in ev}
     assert {"discover", "cluster", "score", "gate", "fetch", "extract", "verify", "facts", "write", "qa", "publish"} <= steps_seen
     assert rep.counts()["ok"] > 5 and rep.counts()["skip"] >= 2
-    sid = rep.reviews[0]["story_id"]                                   # the cyclone story: sensitive -> pending
-    assert {x["status"] for x in rep.reviews} == {"pending"} and any("sensitive:death" in x["reasons"] for x in rep.reviews)
+    sid = rep.items[0]["story_id"]                                   # the cyclone story: sensitive, flagged, published
+    assert {x["status"] for x in rep.items} == {"published"} and any("sensitive:death" in x["reasons"] for x in rep.items)
     assert any(e["step"] == "verify" and e["story"] == sid for e in ev)          # log lines were attached to their story
     assert any(e["step"] == "extract" and e["story"] == sid for e in ev)
     other = [e for e in ev if e["step"] == "facts" and e["status"] == "skip"]
     assert other and other[0]["detail"] == "insufficient_sources" and other[0]["story"] != sid
     assert all(e["story"] == other[0]["story"] for e in ev if e["step"] == "fetch" and e["status"] == "skip")
-    assert any(e["step"] == "qa" and "needs a human" in e["detail"] and e["lang"] in ("bn", "en") for e in ev)
+    assert any(e["step"] == "qa" and "flagged" in e["detail"] and e["lang"] in ("bn", "en") for e in ev)
     assert sum(rep.tokens.values()) > 0 and r["report"] is rep
 
 
@@ -118,12 +114,12 @@ def test_a_failed_feed_is_a_fail_event_and_dry_run_reports_too():
     f = [e for e in rep.events if e["step"] == "discover" and e["status"] == "fail"]
     assert f and f[0]["detail"] == "BBC News World: OSError"
     _, rep = run_with_report(mode="dry-run")
-    assert {x["status"] for x in rep.reviews} == {"pending"}           # sensitive stays pending in every mode
+    assert {x["status"] for x in rep.items} == {"dry_run"}
 
 
 def test_idle_run_reports_every_step_that_did_not_run_as_skip():
-    rep = Report("review")
-    record_run(rep, mode="review", stats={"feeds_ok": 8, "feeds_failed": 0, "items": 3}, n_stories=2, decisions=[],
+    rep = Report("auto")
+    record_run(rep, mode="auto", stats={"feeds_ok": 8, "feeds_failed": 0, "items": 3}, n_stories=2, decisions=[],
                articles={}, updates={})
     skipped = {e["step"] for e in rep.events if e["status"] == "skip"}
     assert {"fetch", "extract", "verify", "write", "qa", "publish"} <= skipped and rep.counts()["fail"] == 0
@@ -185,10 +181,10 @@ def test_report_message_has_workflow_and_engine_sections_in_both_languages():
 
 
 def test_messages_escape_markup_cap_lines_and_stay_under_the_telegram_limit():
-    evil = review("awaiting_review", title='<b>x</b> & <script>alert(1)</script> [S1](http://evil.test)', reasons=["a<b"])
-    text, buttons, silent = nt.format_review(evil, "en", True, "https://github.com/o/r/pull/1", "")
+    evil = review("published", title='<b>x</b> & <script>alert(1)</script> [S1](http://evil.test)', reasons=["a<b"])
+    text, silent = nt.format_item(evil, "en", True)
     assert "<script" not in text and "&lt;script&gt;" in text and "&amp;" in text and text.count("<b>") == 2   # header + title only
-    rep = Report("review")
+    rep = Report("auto")
     for i in range(300):
         rep.add("fetch", "skip", f"d{i}.example: HTTP 404")
     msg = nt.format_report(rep, [], "en", 6, 25, "hourly", "", NOW)
@@ -198,44 +194,32 @@ def test_messages_escape_markup_cap_lines_and_stay_under_the_telegram_limit():
     assert len(chunks) > 3 and all(len(c) <= 4096 for c in chunks) and "\n".join(chunks) == long
 
 
-def test_review_messages_by_status():
-    pr = "https://github.com/owner/newsbot-brain/pull/7"
-    t, b, silent = nt.format_review(review("awaiting_review"), "bn", True, pr, "")
-    assert "রিভিউ দরকার: নতুন লেখা" in t and "Short summary." in t and "BBC (T1)" in t and not silent
-    assert b == [[{"text": "PR খুলুন", "url": pr}, {"text": "লেখা দেখুন", "url": pr + "/files"}]]
-    t, b, silent = nt.format_review(review("awaiting_review", kind="update"), "en", False, "", "")
-    assert "update" in t and "Short summary." not in t and b == [] and "No PR link" in t
-    draft = "https://github.com/owner/newsbot-brain/blob/main/pending/bn/barun.md"
-    t, b, silent = nt.format_review(review("pending", reasons=["sensitive:death"]), "en", True, pr, draft)
-    assert "sensitive:death" in t and not silent and b == [[{"text": "Open draft", "url": draft}]] and "content/bn/" in t
-    for st in ("published", "dry_run"):
-        assert nt.format_review(review(st), "en", True, pr, "")[2] is True          # no sound, no buttons
-        assert nt.format_review(review(st), "en", True, pr, "")[1] == []
+def test_item_messages_by_status():
+    t, silent = nt.format_item(review("published", reasons=["sensitive:death"]), "bn", True)
+    assert "প্রকাশিত হয়েছে" in t and "Short summary." in t and "BBC (T1)" in t and "sensitive:death" in t and silent
+    t, silent = nt.format_item(review("dry_run"), "en", False)
+    assert "Dry run" in t and "Short summary." not in t and silent
 
 
 # ---------------- sending ----------------
 
-def test_notify_sends_a_quiet_report_then_one_message_per_review_item():
+def test_notify_sends_a_quiet_report_then_one_quiet_message_per_article():
     _, rep = run_with_report()
-    rep.reviews.append(review("awaiting_review", title="Metro extension"))
-    rep.reviews.append(review("published", title="Done"))
+    rep.items.append(review("published", title="Metro extension"))
+    rep.items.append(review("published", title="Done"))
     with capture_logs() as cap:
-        rc, tr = notify(rep, pr_url="https://github.com/owner/newsbot-brain/pull/7")
-    assert rc == 0 and len(tr.calls) == 1 + len(rep.reviews) == 5          # one report + one message per review item
+        rc, tr = notify(rep)
+    assert rc == 0 and len(tr.calls) == 1 + len(rep.items)                  # one report + one message per article
     first = tr.calls[0][1]
     assert first["chat_id"] == CHAT and first["parse_mode"] == "HTML" and first["disable_notification"] is True   # routine = silent
-    pend = [p for _, p in tr.calls[1:] if "blob/main/pending/" in json.dumps(p.get("reply_markup", {}))]
-    assert len(pend) == 2 and all(p["disable_notification"] is False for p in pend)
-    pr_msg = next(p for _, p in tr.calls if "Metro extension" in p["text"])
-    assert pr_msg["reply_markup"]["inline_keyboard"][0][0]["url"].endswith("/pull/7") and pr_msg["disable_notification"] is False
-    done = next(p for _, p in tr.calls if "Done" in p["text"])
-    assert done["disable_notification"] is True
+    assert all(p["disable_notification"] is True and "reply_markup" not in p for _, p in tr.calls[1:])
+    assert any("Metro extension" in p["text"] for _, p in tr.calls)
     assert TOKEN not in json.dumps(tr.calls) and TOKEN not in "\n".join(log_lines(cap))
 
 
 def test_a_failing_workflow_step_makes_the_report_loud():
-    rep = Report("review")
-    record_run(rep, mode="review", stats={"feeds_ok": 8, "feeds_failed": 0, "items": 3}, n_stories=1, decisions=[],
+    rep = Report("auto")
+    record_run(rep, mode="auto", stats={"feeds_ok": 8, "feeds_failed": 0, "items": 3}, n_stories=1, decisions=[],
                articles={}, updates={})
     _, tr = notify(rep, env={**ENV, "STEP_OUTCOMES": "run=success,build=failure"})
     assert tr.calls[0][1]["disable_notification"] is False and tr.texts[0].startswith("🟠")
@@ -248,19 +232,18 @@ def test_missing_engine_report_after_a_failed_run_step_is_reported_as_an_error()
     assert tr.texts[0].startswith("🔴") and "🛑" in tr.texts[0] and "❌ ব্যর্থ: run" in tr.texts[0]
 
 
-def test_pr_and_run_links_must_stay_on_the_github_server():
-    for bad in ("http://github.com/o/r/pull/1", "https://github.com.evil.test/o/r/pull/1", "https://evil.test/pull/1",
-                "https://github.com/o/r/pull/1 https://evil.test", "javascript:alert(1)"):
-        rep = Report("review")
-        rep.reviews.append(review("awaiting_review"))
-        _, tr = notify(rep, pr_url=bad, env={**ENV, "RUN_URL": bad})
-        assert all("reply_markup" not in p for _, p in tr.calls) and "evil" not in json.dumps(tr.calls), bad
-        assert any("PR-এর লিংক পাওয়া যায়নি" in x for x in tr.texts)
+def test_run_links_must_stay_on_the_github_server():
+    for bad in ("http://github.com/o/r/actions/runs/1", "https://github.com.evil.test/o/r/actions/runs/1", "https://evil.test/run/1",
+                "https://github.com/o/r/actions/runs/1 https://evil.test", "javascript:alert(1)"):
+        rep = Report("auto")
+        rep.items.append(review("published"))
+        _, tr = notify(rep, env={**ENV, "RUN_URL": bad})
+        assert "evil" not in json.dumps(tr.calls) and "javascript" not in json.dumps(tr.calls), bad
 
 
 def test_off_without_secrets_or_when_disabled_and_idle_runs_can_be_muted():
-    rep = Report("review")
-    record_run(rep, mode="review", stats={"feeds_ok": 8, "feeds_failed": 0, "items": 3}, n_stories=1, decisions=[],
+    rep = Report("auto")
+    record_run(rep, mode="auto", stats={"feeds_ok": 8, "feeds_failed": 0, "items": 3}, n_stories=1, decisions=[],
                articles={}, updates={})
     for env in ({}, {"TELEGRAM_BOT_TOKEN": TOKEN}, {"TELEGRAM_CHAT_ID": CHAT}):
         assert notify(rep, env=env)[1].calls == []
@@ -276,8 +259,8 @@ def test_off_without_secrets_or_when_disabled_and_idle_runs_can_be_muted():
 
 def test_sending_never_fails_the_run_and_never_logs_the_token():
     secret_text = f"Zorblax {TOKEN} https://api.telegram.org/bot{TOKEN}/sendMessage"
-    rep = Report("review")
-    rep.reviews.append(review("pending"))
+    rep = Report("auto")
+    rep.items.append(review("published"))
     with capture_logs() as cap:
         rc, _ = notify(rep, transport=Fake([(500, {})] * 5))
         assert rc == 0
@@ -322,26 +305,10 @@ def test_hourly_workflow_notifies_after_everything_and_reports_every_step():
         assert needed in ids
     engine = next(s for s in st if s.get("id") == "run")
     assert '--report "$RUNNER_TEMP/run_report.json"' in engine["run"] and '--report "$RUNNER_TEMP/run_report.json"' in last["run"]
-    assert "NEWSBOT_PR_URL_FILE" in next(s for s in st if s.get("id") == "commit")["run"]
     secret_steps = [s.get("name") for s in st if any("TELEGRAM" in k for k in (s.get("env") or {}))]
     assert secret_steps == [last["name"]]                                # the secrets reach only the notify step
     setup = " ".join(str(s.get("env")) for s in steps(load(WF_DIR / "setup.yml")))
     assert "TELEGRAM_BOT_TOKEN" in setup and "TELEGRAM_CHAT_ID" in setup
-
-
-def test_brain_commit_writes_the_pr_url_to_a_file_and_never_prints_it():
-    with tempfile.TemporaryDirectory() as d:
-        tmp = Path(d)
-        _, brain, env = _setup(tmp)
-        _write_run_output(brain)
-        r = _script(brain, "review", {**env, "NEWSBOT_PR_URL_FILE": str(tmp / "pr.txt")})
-        assert r.stdout.split() == ["committed", "pr-opened"] and "example.invalid" not in r.stdout + r.stderr
-        assert (tmp / "pr.txt").read_text() == "https://example.invalid/pr/1\n"
-    with tempfile.TemporaryDirectory() as d:
-        tmp = Path(d)
-        _, brain, env = _setup(tmp)
-        _write_run_output(brain)
-        assert _script(brain, "review", env).stdout.split() == ["committed", "pr-opened"] and not (tmp / "pr.txt").exists()
 
 
 def _load_setup_check():
@@ -391,6 +358,6 @@ def test_dry_run_uses_the_fixture_clock_so_it_shows_the_whole_pipeline():
     rep = Report("dry-run")
     with tempfile.TemporaryDirectory() as d, collect(rep):
         r = run_pipeline(CFG, "dry-run", Path(d), report=rep)                 # no now= : the CLI default
-    assert r["NEW"] >= 1 and r["factsheets"] and rep.reviews
+    assert r["NEW"] >= 1 and r["factsheets"] and rep.items
     assert {e["step"] for e in rep.events if e["status"] == "ok"} >= {"discover", "gate", "verify", "write", "qa", "publish"}
-    assert {x["status"] for x in rep.reviews} <= {"pending", "dry_run"}
+    assert {x["status"] for x in rep.items} == {"dry_run"}

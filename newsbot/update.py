@@ -270,8 +270,8 @@ def run_updates(decisions, scored, cfg, brain, mode: str, llm, fetcher, embedder
         previous = {l: previous_article(*live[l]) for l in update_langs}
         oc.results = produce_articles(merged, update_langs + new_langs, cfg, brain, llm, embedder=embedder,
                                       previous=previous, now=now)
-        oc.updated = [l for l in update_langs if oc.results[l].status in ("publish", "pending")]
-        oc.added = [l for l in new_langs if oc.results[l].status in ("publish", "pending")]
+        oc.updated = [l for l in update_langs if oc.results[l].status in ("publish", "rejected")]
+        oc.added = [l for l in new_langs if oc.results[l].status in ("publish", "rejected")]
         oc.dates = {l: _ts_str(live[l][0].get("date")) for l in update_langs}
         if not dry:
             write_outputs(brain, merged, oc.results, now, published_dates=oc.dates)
@@ -282,5 +282,5 @@ def run_updates(decisions, scored, cfg, brain, mode: str, llm, fetcher, embedder
             d.reason += f"|{r.lang}:{r.status}"
         log.info("update story=%s updated=%s added=%s", d.story_id, ",".join(oc.updated) or "-", ",".join(oc.added) or "-")
     if not dry and out:
-        record_updates(state_dir, out, now, mode)
+        record_updates(state_dir, out, now)
     return out

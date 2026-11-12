@@ -9,7 +9,7 @@ const LLM = fs.readFileSync(new URL("llm.yaml", dir), "utf8");
 const diffLines = (a, b) => { const x = a.split("\n"), y = b.split("\n"); return { removed: x.filter((l) => !y.includes(l)), added: y.filter((l) => !x.includes(l)) }; };
 
 test("reads block scalars, flow maps, flow lists, quoted keys and list-item maps", () => {
-  assert.equal(get(NEWS, ["publish", "mode"]), "review");
+  assert.equal(get(NEWS, ["publish", "on_sensitive"]), "publish");
   assert.equal(typeof get(NEWS, ["limits", "max_new_per_day"]), "number");
   assert.deepEqual(get(NEWS, ["site", "languages"]), ["bn", "en"]);
   assert.equal(typeof get(NEWS, ["scoring", "weights", "velocity"]), "number");
@@ -24,13 +24,13 @@ test("a change replaces one token only: comments, spacing and every other line s
   const d = diffLines(NEWS, a);
   assert.equal(d.removed.length, 1); assert.equal(d.added.length, 1);
   assert.equal(get(a, ["limits", "max_new_per_day"]), 3);
-  const b = set(NEWS, ["publish", "mode"], "auto");
+  const b = set(NEWS, ["publish", "on_sensitive"], "reject");
   const db = diffLines(NEWS, b);
   assert.equal(db.removed.length, 1); assert.equal(db.added.length, 1);
-  assert.match(db.added[0], /^ +mode: auto( +#.*)?$/);                         // the trailing comment (if any) is kept
-  assert.equal(db.removed[0].replace(/ *#.*$/, "").replace("review", "auto"), db.added[0].replace(/ *#.*$/, ""));
+  assert.match(db.added[0], /^ +on_sensitive: reject( +#.*)?$/);                         // the trailing comment (if any) is kept
+  assert.equal(db.removed[0].replace(/ *#.*$/, "").replace("publish   ", "reject").replace(/^( +on_sensitive: )publish/, "$1reject"), db.added[0].replace(/ *#.*$/, ""));
   assert.equal(db.removed[0].split("#")[1], db.added[0].split("#")[1]);
-  assert.equal(get(b, ["publish", "mode"]), "auto");
+  assert.equal(get(b, ["publish", "on_sensitive"]), "reject");
   const c = set(NEWS, ["site", "name"], 'My "News" ✓');
   assert.equal(get(c, ["site", "name"]), 'My "News" ✓');
   assert.equal(set(NEWS, ["limits", "max_new_per_day"], get(NEWS, ["limits", "max_new_per_day"])), NEWS);
@@ -47,9 +47,9 @@ test("flow-map entries and flow lists", () => {
 });
 
 test("missing keys are inserted into an existing block or an empty flow map; unknown parents are refused", () => {
-  const a = set(NEWS.replace(/^ *approve_buttons:.*\n/m, ""), ["notify", "telegram", "approve_buttons"], true);
-  assert.equal(get(a, ["notify", "telegram", "approve_buttons"]), true);
-  assert.equal(get(a, ["notify", "telegram", "max_lines"]), get(NEWS, ["notify", "telegram", "max_lines"]));
+  const a = set(NEWS.replace(/^ *max_lines:.*\n/m, ""), ["notify", "telegram", "max_lines"], 70);
+  assert.equal(get(a, ["notify", "telegram", "max_lines"]), 70);
+  assert.equal(get(a, ["notify", "telegram", "enabled"]), true);       // the neighbours are untouched
   const b = set(NEWS, ["ads", "slots", "after_summary"], "123");
   assert.equal(get(b, ["ads", "slots", "after_summary"]), "123");
   assert.throws(() => set(NEWS, ["nope", "x"], 1), /not found/);

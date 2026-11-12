@@ -158,7 +158,7 @@ def test_one_attempt_is_not_enough_when_the_first_repair_is_still_wrong():
         return art
     w, calls = _writer(2, bad)
     r = _produce_with(w, max_repair_attempts=1)
-    assert calls == [False, True] and "unsupported_name" in r.qa.failures and r.status == "pending"
+    assert calls == [False, True] and "unsupported_name" in r.qa.failures and r.status == "rejected"
 
 
 def test_a_too_short_draft_is_rewritten_longer():

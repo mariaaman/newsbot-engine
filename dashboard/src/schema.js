@@ -19,7 +19,8 @@ export const GROUPS = [
 ];
 
 export const FIELDS = [
-  en(N, ["publish", "mode"], "publish", "প্রকাশের মোড", "review = আপনি দেখে অনুমোদন দেন; auto = নিজে প্রকাশ (সংবেদনশীল খসড়া তবুও আটকে থাকে)", ["review", "auto"]),
+  en(N, ["publish", "on_sensitive"], "publish", "সংবেদনশীল বিষয়ের লেখা", "publish = প্রকাশ হয়; reject = বাতিল হয়ে rejected/-এ জমা থাকে", ["publish", "reject"]),
+  en(N, ["publish", "on_review"], "publish", "অন্য সতর্কতার লেখা", "কম আত্মবিশ্বাস ইত্যাদি। publish = প্রকাশ; reject = বাতিল", ["publish", "reject"]),
 
   int(N, ["limits", "max_new_per_day"], "limits", "দিনে সর্বোচ্চ নতুন আর্টিকেল", "দিনের সীমা (সাইটের সময়ে)", 0),
   int(N, ["limits", "max_new_per_run"], "limits", "প্রতি রানে নতুন আর্টিকেল", "এক ঘণ্টার রানে কয়টা লেখা হবে। বেশি = বেশি টোকেন ও সময়", 1),
@@ -66,11 +67,11 @@ export const FIELDS = [
   int(N, ["research", "source_chars"], "research", "সূত্র-পাতার অক্ষর", "বেশি দিলে প্রতি আর্টিকেলে neuron বেশি লাগে", 1000, 30000),
   int(N, ["research", "claims_per_source"], "research", "সূত্রপ্রতি তথ্য", "বেশি = সমৃদ্ধ লেখা", 5, 60),
 
-  int(N, ["qa", "min_words", "bn"], "qa", "ন্যূনতম শব্দ (বাংলা)", "কম শব্দের লেখা pending-এ যায়", 50),
+  int(N, ["qa", "min_words", "bn"], "qa", "ন্যূনতম শব্দ (বাংলা)", "কম শব্দের লেখা বাতিল হয়", 50),
   int(N, ["qa", "min_words", "en"], "qa", "ন্যূনতম শব্দ (ইংরেজি)", "", 50),
   num(N, ["qa", "max_ngram_overlap"], "qa", "সূত্রের সঙ্গে সর্বোচ্চ মিল", "বেশি মিললে নকলের সন্দেহ", 0, 1),
   int(N, ["qa", "ngram_size"], "qa", "n-gram আকার", "", 3),
-  int(N, ["qa", "min_confirmed_facts"], "qa", "ন্যূনতম নিশ্চিত তথ্য", "কম হলে pending-এ যায়", 0),
+  int(N, ["qa", "min_confirmed_facts"], "qa", "ন্যূনতম নিশ্চিত তথ্য", "কম হলে সতর্কতা চিহ্ন পড়ে", 0),
   int(N, ["qa", "max_quote_words"], "qa", "উদ্ধৃতির সর্বোচ্চ শব্দ", "", 1),
   num(N, ["qa", "duplicate_title_similarity"], "qa", "শিরোনামের ডুপ্লিকেট-সীমা", "", 0, 1),
   num(N, ["qa", "duplicate_embedding_threshold"], "qa", "এমবেডিং ডুপ্লিকেট-সীমা", "", 0, 1),
@@ -102,8 +103,6 @@ export const FIELDS = [
   bool(N, ["notify", "telegram", "report_idle_runs"], "telegram", "ফাঁকা রানেও বার্তা", ""),
   bool(N, ["notify", "telegram", "include_summary"], "telegram", "সারাংশসহ বার্তা", "সারাংশ টেলিগ্রামের সার্ভার দিয়ে যায়"),
   int(N, ["notify", "telegram", "max_lines"], "telegram", "রিপোর্টের সর্বোচ্চ লাইন", "", 10, 200),
-  bool(N, ["notify", "telegram", "approve_buttons"], "telegram", "অনুমোদন/বাতিল বাটন", "approve Worker চালু থাকলে"),
-  str(N, ["notify", "telegram", "edit_url"], "telegram", "approve Worker-এর ঠিকানা", "খসড়ার ব্যক্তিগত লিংকের জন্য", { pattern: "^(https://[A-Za-z0-9.-]+(:[0-9]+)?/?)?$" }),
 
   num(L, ["llm", "budget", "stop_fraction"], "llm", "বাজেটের কতটুকুতে থামবে", "০.৯ = সীমার ৯০%-এ পরের মডেলে যাবে", 0, 1, true),
   int(L, ["llm", "budget", "neurons_per_day_per_account"], "llm", "প্রতি অ্যাকাউন্টের দৈনিক neuron সীমা", "Cloudflare ফ্রি = ১০,০০০ (মধ্যরাত UTC-তে রিসেট)। ০ = সীমাহীন", 0),

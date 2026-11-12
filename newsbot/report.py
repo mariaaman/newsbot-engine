@@ -28,7 +28,7 @@ class Report:
         self.mode, self.started = mode, started
         self.events: list[dict] = []
         self.stories: dict[str, dict] = {}        # story_id -> {action, route, queued}
-        self.reviews: list[dict] = []
+        self.items: list[dict] = []
         self.tokens: dict[str, int] = {}          # task -> tokens used this run
 
     def add(self, step: str, status: str, detail: str = "", story: str = "", lang: str = "") -> dict:
@@ -47,7 +47,7 @@ class Report:
 
     def to_dict(self) -> dict:
         return {"mode": self.mode, "started": self.started, "events": self.events, "stories": self.stories,
-                "reviews": self.reviews, "tokens": self.tokens}
+                "items": self.items, "tokens": self.tokens}
 
     def save(self, path: str | Path | None) -> None:
         if path:
@@ -63,7 +63,7 @@ class Report:
             return None
         r = cls(str(d.get("mode", "")), str(d.get("started", "")))
         r.events = [e for e in d.get("events", []) if isinstance(e, dict) and e.get("status") in STATUSES]
-        r.stories, r.reviews, r.tokens = d.get("stories", {}), d.get("reviews", []), d.get("tokens", {})
+        r.stories, r.items, r.tokens = d.get("stories", {}), d.get("items", d.get("reviews", [])), d.get("tokens", {})
         return r
 
 
@@ -159,16 +159,16 @@ def _article_events(r: Report, sid: str, results: dict, kind: str, mode: str) ->
         if q is not None and q.failures:
             r.add("qa", "fail", ", ".join(q.failures), sid, lang)
         else:
-            r.add("qa", "ok", ("needs a human: " + ", ".join(q.review)) if q is not None and q.review
+            r.add("qa", "ok", ("flagged: " + ", ".join(q.review)) if q is not None and q.review
                   else "all gates passed", sid, lang)
         a = res.article
         if not a:
             continue
-        if res.status == "pending" and getattr(res, "hold", "") == "rejected":      # cancelled: archived in rejected/, never waits for a human
+        if res.status == "rejected":                  # cancelled: archived in rejected/ for the next upgrade
             r.add("publish", "skip", "rejected (archived for the next upgrade)", sid, lang)
             continue
-        status = "pending" if res.status == "pending" else {"review": "awaiting_review", "auto": "published"}.get(mode, "dry_run")
-        r.reviews.append({"story_id": sid, "lang": lang, "kind": kind, "status": status, "title": a["title"],
+        status = "published" if mode == "auto" else "dry_run"
+        r.items.append({"story_id": sid, "lang": lang, "kind": kind, "status": status, "title": a["title"],
                           "summary": a["summary"], "slug": a["slug"], "reasons": q.reasons() if q is not None else [],
                           "sources": [{"name": s.get("name", ""), "tier": s.get("tier", "")} for s in a["sources"]]})
 
@@ -208,8 +208,8 @@ def record_run(r: Report, *, mode: str, stats: dict, n_stories: int, decisions: 
         for step in ("fetch", "extract", "verify", "write", "qa", "publish"):
             r.add(step, "skip", "no story to cover this hour")
     else:
-        c = Counter(x["status"] for x in r.reviews)
-        if r.reviews:
-            r.add("publish", "ok", f"{c['awaiting_review']} awaiting review · {c['pending']} pending · {c['published']} published")
+        c = Counter(x["status"] for x in r.items)
+        if r.items:
+            r.add("publish", "ok", f"{c['published']} published" + (f" · {c['dry_run']} dry run" if c["dry_run"] else ""))
         else:
             r.add("publish", "skip", "nothing was written")

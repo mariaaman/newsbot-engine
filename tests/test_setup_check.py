@@ -33,11 +33,10 @@ GOOD = {("GET", "/repos/me/newsbot-brain"): (200, {"private": True, "permissions
 
 
 def test_env_check_flags_missing_and_bad_values_without_leaking():
-    out = sc.check_env({**ENV, "BRAIN_REPO_TOKEN": "", "PUBLISH_MODE": "yolo"})
+    out = sc.check_env({**ENV, "BRAIN_REPO_TOKEN": ""})
     assert ("FAIL", "secret BRAIN_REPO_TOKEN") in out and not any("GROQ" in n or "GEMINI" in n for _, n in out)
-    assert ("FAIL", "variable PUBLISH_MODE is review or auto") in out
     assert all(SECRET not in n for _, n in sc.check_env(ENV))
-    assert all(s == "OK" or "optional" in n for s, n in sc.check_env({**ENV, "PUBLISH_MODE": "auto"}) if s != "SKIP")
+    assert all(s == "OK" or "optional" in n for s, n in sc.check_env(ENV) if s != "SKIP")
 
 
 def test_brain_repo_checks_reachability_push_and_privacy():
@@ -83,7 +82,7 @@ def test_brain_structure_against_the_template_and_an_empty_dir():
 
 def test_run_all_output_has_only_status_lines_and_no_secret_values():
     http = FakeHttp(GOOD)
-    results = sc.run_all({**ENV, "PUBLISH_MODE": "review"}, TEMPLATE, http)
+    results = sc.run_all(ENV, TEMPLATE, http)
     text = "\n".join(f"{s} {n}" for s, n in results)
     assert not [r for r in results if r[0] == "FAIL"]
     assert SECRET not in text and "acct1" not in text and all(l.split()[0] in ("OK", "FAIL", "SKIP") for l in text.splitlines())

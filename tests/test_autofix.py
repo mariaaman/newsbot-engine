@@ -52,7 +52,7 @@ def test_a_figure_with_no_clear_answer_is_removed_not_guessed():
 
 def test_autofix_off_leaves_the_failure_for_a_human():
     r, _ = _produce("Opposition leaders said 9,000 people marched on the ministry [S1].", autofix=False)
-    assert r.status == "pending" and "unsupported_number" in r.qa.failures
+    assert r.status == "rejected" and "unsupported_number" in r.qa.failures
 
 
 def test_a_citation_is_kept_when_the_last_sentence_of_a_paragraph_is_removed():
@@ -135,19 +135,21 @@ def test_a_draft_that_cannot_be_fixed_is_archived_in_rejected_not_left_pending(t
     from newsbot.qa import QAResult
     pub = type("P", (), {"on_failure": "reject", "on_sensitive": "reject", "on_review": "publish"})()
     q = QAResult(); q.failures = ["unsupported_name"]
-    assert q.route(pub) == ("pending", "rejected")
+    assert q.route(pub) == "rejected"
     q = QAResult(); q.review = ["sensitive:crime"]
-    assert q.route(pub) == ("pending", "rejected")
+    assert q.route(pub) == "rejected"
     q = QAResult(); q.review = ["low_confidence"]
-    assert q.route(pub) == ("publish", "")
-    assert QAResult().route(pub) == ("publish", "")
-    assert q.route(type("P", (), {})()) == ("pending", "pending")        # settings absent: the old, safe behaviour
+    assert q.route(pub) == "publish"
+    assert QAResult().route(pub) == "publish"
+    assert q.route(type("P", (), {})()) == "publish"        # settings absent: sensitive / flagged drafts go live; a failure is cancelled
+    q = QAResult(); q.failures = ["unsupported_name"]
+    assert q.route(type("P", (), {})()) == "rejected"
     # the file goes to rejected/<lang>/
     cfg = make_cfg(publish={"mode": "auto", "on_failure": "reject"})
     mock, _ = _mock("Zorblax Quimby opened the line [S1].")
     llm = build_llm(load_llm_settings(TEMPLATE), None, dry_run=True, mock=mock)
     cfg = make_cfg(qa={"max_repair_attempts": 0, "autofix": False}, publish={"mode": "auto", "on_failure": "reject"})
     r = produce_articles(FS, ["en"], cfg, None, llm, recent_by_lang={"en": []})["en"]
-    assert r.status == "pending" and r.hold == "rejected"
+    assert r.status == "rejected"
     paths = write_outputs(tmp_path, FS, {"en": r})
-    assert paths[0].startswith("rejected/en/") and (tmp_path / paths[0]).is_file() and not (tmp_path / "pending").exists()
+    assert paths[0].startswith("rejected/en/") and (tmp_path / paths[0]).is_file() 

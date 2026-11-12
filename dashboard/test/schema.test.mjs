@@ -38,8 +38,8 @@ test("coerce enforces type, range, enum, pattern and list rules", () => {
   assert.throws(() => coerce(f(["limits", "max_item_age_hours"]), 0), /greater than 0/);
   assert.equal(coerce(f(["clustering", "embedding_threshold"]), 0.74), 0.74);
   assert.throws(() => coerce(f(["clustering", "embedding_threshold"]), 1.5), /at most 1/);
-  assert.throws(() => coerce(f(["publish", "mode"]), "yolo"), /one of/);
-  assert.equal(coerce(f(["publish", "mode"]), "auto"), "auto");
+  assert.throws(() => coerce(f(["publish", "on_sensitive"]), "yolo"), /one of/);
+  assert.equal(coerce(f(["publish", "on_sensitive"]), "reject"), "reject");
   assert.throws(() => coerce(f(["ads", "enabled"]), "true"), /true or false/);
   assert.equal(coerce(f(["ads", "publisher_id"]), "pub-1234567890123456"), "pub-1234567890123456");
   assert.throws(() => coerce(f(["ads", "publisher_id"]), "x"), /does not look right/);

@@ -16,7 +16,7 @@ def test_dry_run_without_brain_falls_back_to_template(tmp_path):
 
 
 def test_invalid_brain_fails_loudly(tmp_path):
-    assert main(["run", "--mode", "review", "--brain", str(tmp_path)]) == 2
+    assert main(["run", "--mode", "auto", "--brain", str(tmp_path)]) == 2
 
 
 def test_validate_command():

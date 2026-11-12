@@ -18,7 +18,11 @@ limits:
   min_update_fact_words: 5   # a new fact shorter than this is a tiny change and does not justify an update
   insufficient_sources_cooldown_hours: 3   # a story that could not be verified (too few trusted pages) is not re-fetched for this long; 0 = every hour
 publish:
-  mode: review          # review | auto (use review for the first weeks)
+  # Nothing waits for a human: an article is published, or (if a quality gate still fails after the automatic fixes)
+  # cancelled and archived in the private brain's rejected/ folder so the next upgrade can learn from it.
+  on_failure: reject      # reject (the only choice)
+  on_sensitive: publish   # publish | reject: clean article on a sensitive topic (death, crime, health ...)
+  on_review: publish      # publish | reject: clean article with another flag (low confidence ...)
 scoring:
   threshold: 0.6
   weights: {velocity: 0.3, breadth: 0.25, trends: 0.2, recency: 0.1, topic_fit: 0.15, saturation: 0.2}
@@ -26,13 +30,13 @@ llm: {}   # see llm.yaml (models, chains, budgets)
 qa:
   min_words: {bn: 450, en: 500}
   max_ngram_overlap: 0.08
-  min_confirmed_facts: 1        # fewer confirmed facts -> pending/ (low confidence)
+  min_confirmed_facts: 1        # fewer confirmed facts -> flagged (low confidence)
 write:
   own_source_chars: 1500        # chars of each same-language source shown to the writer (spelling/wording only)
   local_angle:
     bn: "Explain what this means for readers in Bangladesh."
     en: "Give short background and an international view."
-# Sensitive topics never auto-publish (spec rule 6): a match sends the draft to pending/ for human review.
+# Sensitive topics (spec rule 6): a match flags the draft; publish.on_sensitive decides publish or cancel.
 # English: whole words, 'stem*' = prefix. Bengali: substring. Edit freely; keep it broad.
 sensitive:
   keywords:
@@ -62,7 +66,5 @@ notify:
     enabled: true
     language: bn              # bn | en: the labels in the messages
     report_idle_runs: true    # a quiet (silent) report every run; false = only when something happened
-    include_summary: true     # review messages carry the article summary; it passes through Telegram's servers
+    include_summary: true     # story messages carry the article summary; it passes through Telegram's servers
     max_lines: 60             # a run report longer than this is cut with a "... more lines" note
-    approve_buttons: false    # true after the approve Worker is live (docs/TELEGRAM_APPROVE.md): Approve / Reject buttons on sensitive drafts
-    edit_url: ""             # https://newsbot-approve.<you>.workers.dev : pending drafts get a private link to read, edit, approve or reject

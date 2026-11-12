@@ -1,5 +1,5 @@
 """Stage 8-9 orchestration for one story: write each routed language, run QA, and put the result where it
-belongs (content/<lang>/<slug>.md or pending/<lang>/<slug>.md). Failures affect that language only.
+belongs (content/<lang>/<slug>.md or rejected/<lang>/<slug>.md). Failures affect that language only.
 Committing / PRs / deploy are M6; story-state updates for new articles are M6/M7."""
 from __future__ import annotations
 
@@ -25,19 +25,18 @@ log = logging.getLogger("newsbot.articles")
 @dataclass
 class ArticleResult:
     lang: str
-    status: str                       # publish | pending | queued_budget | write_failed
+    status: str                       # publish | rejected | queued_budget | write_failed
     article: dict | None = None
     qa: QAResult | None = None
     path: str | None = None
-    hold: str = "pending"             # for a non-published draft: pending (waits for a human) | rejected (archived, story closed)
 
 
 def load_recent_articles(brain: str | Path | None, lang: str, limit: int = 300) -> list[dict]:
-    """Front-matter summaries (story_id, title, slug) of the newest published and pending articles."""
+    """Front-matter summaries (story_id, title, slug) of the newest published articles."""
     if not brain:
         return []
     files: list[Path] = []
-    for folder in ("content", "pending"):
+    for folder in ("content",):
         d = Path(brain) / folder / lang
         if d.is_dir():
             files += [f for f in d.glob("*.md")]
@@ -60,7 +59,7 @@ def load_recent_articles(brain: str | Path | None, lang: str, limit: int = 300) 
 # Failures a rewrite can cure WITHOUT weakening any gate: the writer used a name or figure that is not in the fact sheet,
 # is too short, quotes wrongly, cites badly, copies source wording, or the LLM fact check found unsupported claims.
 # Not repairable (a rewrite would not make them true): schema, source_not_fetched, no_sources, duplicate_title,
-# duplicate_embedding, no_change, correction_unsupported. Those stay in pending/ with their reasons.
+# duplicate_embedding, no_change, correction_unsupported. Those are cancelled and archived in rejected/ with their reasons.
 REPAIRABLE = {
     "unsupported_name", "unsupported_number", "confirmed_unsupported_number", "unsupported_claims",
     "min_words", "title_length", "category", "slug", "duplicate_slug",
@@ -126,7 +125,7 @@ NAME_NUMBER_FAILS = {"unsupported_name", "unsupported_number", "confirmed_unsupp
 
 
 def _offending(art: dict, fs, qa) -> dict:
-    """The names and figures a gate rejected, for the owner (private brain only: diagnostics report and pending draft)."""
+    """The names and figures a gate rejected, for the owner (private brain only: diagnostics report and rejected archive)."""
     if not set(qa.failures) & NAME_NUMBER_FAILS:
         return {}
     try:
@@ -279,12 +278,12 @@ def produce_articles(fs: FactSheet, languages: list[str], cfg, brain, llm, *, em
         if qa.failures and set(qa.failures) <= REPAIRABLE and not tr:          # a translation is never rewritten: it is checked against its lead
             art, qa, _ = _repair(llm, brain, cfg, fs, lang, art, qa, recent, embedder, est, prev, now)
         _learn_from(fs, lang, art, qa, verdicts, autofixed=art is not before_fix, lead=lead_art)
-        status, hold = qa.route(cfg.publish)
-        results[lang] = ArticleResult(lang, status, art, qa, hold=hold or "pending")
+        status = qa.route(cfg.publish)
+        results[lang] = ArticleResult(lang, status, art, qa)
         DIAG.add("article", story=fs.story_id, lang=lang, status=status, failures=list(qa.failures))
-        log.info("article story=%s lang=%s status=%s%s failures=%s review=%s sanitized=%d", fs.story_id, lang,
-                 status, "(rejected)" if hold == "rejected" else "", ",".join(qa.failures) or "-", ",".join(qa.review) or "-", removed)
-        if hold == "rejected":
+        log.info("article story=%s lang=%s status=%s failures=%s review=%s sanitized=%d", fs.story_id, lang,
+                 status, ",".join(qa.failures) or "-", ",".join(qa.review) or "-", removed)
+        if status == "rejected":
             _learn_rejected(fs, lang, art, qa)
     return results
 
@@ -300,8 +299,8 @@ def _learn_rejected(fs, lang: str, art: dict, qa) -> None:
 
 
 def _existing_image(brain: Path, lang: str, slug: str) -> dict | None:
-    """An update rewrites the whole file: keep the photo the live (or pending) article already has."""
-    for sub in ("content", "pending"):
+    """An update rewrites the whole file: keep the photo the live (or archived) article already has."""
+    for sub in ("content", "rejected"):
         f = brain / sub / lang / f"{slug}.md"
         if f.is_file():
             parts = f.read_text(encoding="utf-8").split("---", 2)
@@ -316,7 +315,7 @@ def _existing_image(brain: Path, lang: str, slug: str) -> dict | None:
 
 def write_outputs(brain: str | Path, fs: FactSheet, results: dict[str, ArticleResult], now=None,
                   published_dates: dict | None = None, image: dict | None = None) -> list[str]:
-    """publish -> content/<lang>/<slug>.md, pending -> pending/<lang>/<slug>.md (with the reasons).
+    """publish -> content/<lang>/<slug>.md, rejected -> rejected/<lang>/<slug>.md (with the reasons, for the next upgrade).
     Returns the written paths relative to brain."""
     now = now or utcnow()
     written = []
@@ -326,12 +325,12 @@ def write_outputs(brain: str | Path, fs: FactSheet, results: dict[str, ArticleRe
         if r.status == "publish":
             rel, extra = Path("content") / lang / f"{r.article['slug']}.md", {}
         else:
-            rel = Path("rejected" if r.hold == "rejected" else "pending") / lang / f"{r.article['slug']}.md"
-            extra = {"pending": {"failures": r.qa.failures, "review": r.qa.review,
+            rel = Path("rejected") / lang / f"{r.article['slug']}.md"
+            extra = {"rejected": {"failures": r.qa.failures, "review": r.qa.review,
                                  "unsupported": r.qa.details.get("unsupported_claims", {}).get("unsupported", [])}}
             off = _offending(r.article, fs, r.qa)
             if off:
-                extra["pending"]["offending"] = off            # for the owner: delete these names / figures, then publish
+                extra["rejected"]["offending"] = off            # the names / figures a gate refused
         img = image or _existing_image(Path(brain), lang, r.article["slug"])
         if img:
             extra["image"] = img

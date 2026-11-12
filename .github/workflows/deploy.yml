@@ -1,6 +1,6 @@
 name: deploy
 # Publishes what is already in the private brain repo: build the site and deploy it to Cloudflare Pages. No models, no news.
-# Started by the Telegram approve Worker right after you approve a draft (docs/TELEGRAM_APPROVE.md), or by hand.
+# Started by hand (or by the dashboard): rebuilds and redeploys the sites from the brain.
 # Shares the hourly concurrency group, so the two never touch the brain state at the same time. If a newer run replaces
 # a waiting one, nothing is lost: every run builds the brain's current main.
 on:

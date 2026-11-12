@@ -218,10 +218,10 @@ def test_pending_draft_lists_the_offending_names_and_numbers_for_the_owner():
     a["body_markdown"] = a["body_markdown"].replace("\n\n## ", "\n\nZorblax Quimby opened it in 2014 [S1].\n\n## ", 1)
     fs = STORIES["ev-metro"]
     qa = QAResult(failures=["unsupported_name", "unsupported_number"], review=[])
-    res = {"en": ArticleResult(lang="en", status="pending", article=a, qa=qa)}
+    res = {"en": ArticleResult(lang="en", status="rejected", article=a, qa=qa)}
     with tempfile.TemporaryDirectory() as d:
         write_outputs(d, fs, res)
-        f = next(Path(d, "pending", "en").glob("*.md"))
+        f = next(Path(d, "rejected", "en").glob("*.md"))
         fm = yaml.safe_load(f.read_text(encoding="utf-8").split("---", 2)[1])
-    off = fm["pending"]["offending"]
+    off = fm["rejected"]["offending"]
     assert "2014" in off["numbers"] and any("Zorblax" in n or "Quimby" in n for n in off["names"])

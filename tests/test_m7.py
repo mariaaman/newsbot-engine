@@ -28,6 +28,7 @@ from tests.test_publish import _record
 CFG = make_cfg()
 FS = {fs.story_id: fs for fs in load_fact_sheets()}["ev-metro"]
 LATER = NOW + timedelta(hours=5)
+CFG_LIVE = make_cfg(publish={"on_sensitive": "publish", "on_review": "publish"})      # the real defaults: flagged drafts go live
 
 A1 = "The Kamalapur metro extension carried 61,000 passengers on its first day of service, officials said."
 B1 = "Metro operators reported that 61,000 passengers used the Kamalapur extension on its first day of service."
@@ -252,10 +253,10 @@ def test_correction_must_be_real_or_the_update_is_parked():
             llm, _ = mk_llm(write_en=writer("en", **bad))
             dec, out = do_update(d, NEW_PAGES, NEW_ITEMS, llm, route=("en",))
             r = out[FS.story_id].results["en"]
-            assert r.status == "pending" and "correction_unsupported" in r.qa.failures, bad
+            assert r.status == "rejected" and "correction_unsupported" in r.qa.failures, bad
             st = load_stories(d / "state")[FS.story_id]
-            assert st.versions["en"]["update_state"] == "pending"           # old article stays live; draft is in pending/
-            assert (d / "pending" / "en" / f"{st.versions['en']['slug']}.md").is_file()
+            assert "update_state" not in st.versions["en"] and st.versions["en"]["state"] == "published"   # old article stays live
+            assert (d / "rejected" / "en" / f"{st.versions['en']['slug']}.md").is_file()                  # the cancelled update is archived
             assert load_published(d, "en", st.versions["en"]["slug"])[0]["fact_sheet_version"] == 1
 
 
@@ -287,38 +288,29 @@ def _old_en():
     return Path(d), "en", st.versions["en"]["slug"]
 
 
-# ---------------- review mode, reconcile ----------------
+# ---------------- reconcile (tidies data written by older versions) ----------------
 
-def test_review_mode_update_waits_for_merge_and_blocks_a_second_update():
-    with tempfile.TemporaryDirectory() as t:
-        d = brain_with_story(t)
-        do_update(d, NEW_PAGES, NEW_ITEMS, mk_llm()[0], route=("en",), mode="review")
-        st = load_stories(d / "state")[FS.story_id]
-        v = st.versions["en"]
-        assert v["state"] == "published" and v["update_state"] == "awaiting_review" and v["update_lastmod"] == iso(LATER)
-        known = {FS.story_id: st}
-        s = SimpleNamespace(cluster=scored_for([])[0].cluster, score=1.0, components={}, blocked=False,
-                            trusted_domains={"a", "b", "c"}, trusted_by_lang={"en": {"a", "b"}})
-        dd = decide([s], known, CFG, LATER + timedelta(hours=9), local_day_start(LATER + timedelta(hours=9), 6), 0)[0]
-        assert dd.action == "SKIP" and dd.reason == "update_awaiting_review"
-        assert reconcile(d, LATER + timedelta(hours=1))["updates_applied"] == 1     # the file on main carries lastmod >= update
-        assert "update_state" not in load_stories(d / "state")[FS.story_id].versions["en"]
-
-
-def test_unmerged_update_expires_and_a_deleted_pending_draft_is_rejected():
+def test_reconcile_clears_old_update_flags_and_turns_waiting_drafts_into_published_or_rejected():
     with tempfile.TemporaryDirectory() as t:
         d = brain_with_story(t)
         stories = load_stories(d / "state")
         v = stories[FS.story_id].versions["en"]
-        v["update_state"], v["update_lastmod"] = "awaiting_review", iso(LATER)       # main still has the older lastmod
+        v["update_state"], v["update_lastmod"] = "awaiting_review", iso(LATER)       # old data: an update waiting in a PR
+        stories[FS.story_id].versions["bn"]["state"] = "pending"                      # old data: a draft waiting for a human
+        (d / "content" / "bn" / f"{stories[FS.story_id].versions['bn']['slug']}.md").unlink()
         save_stories(d / "state", stories)
-        assert reconcile(d, LATER + timedelta(hours=10))["updates_rejected"] == 0
-        assert reconcile(d, LATER + timedelta(hours=73))["updates_rejected"] == 1
-        stories = load_stories(d / "state")
-        v = stories[FS.story_id].versions["bn"]
-        v["update_state"], v["update_lastmod"] = "pending", iso(LATER)
-        save_stories(d / "state", stories)                                            # no pending draft file exists
-        assert reconcile(d, LATER)["updates_rejected"] == 1
+        c = reconcile(d, LATER)
+        after = load_stories(d / "state")[FS.story_id].versions
+        assert "update_state" not in after["en"] and after["bn"]["state"] == "rejected" and c["rejected"] == 1
+
+
+def test_a_rejected_update_still_marks_its_urls_as_seen_so_the_next_hour_is_free():
+    with tempfile.TemporaryDirectory() as t:
+        d = brain_with_story(t)
+        llm, _ = mk_llm(write_en=writer("en", **_correction(said="a figure the article never contained: 999")))
+        do_update(d, NEW_PAGES, NEW_ITEMS, llm, route=("en",))
+        st = load_stories(d / "state")[FS.story_id]
+        assert all(i.url in st.urls for i in NEW_ITEMS) and not st.updates
 
 
 # ---------------- statuses ----------------
@@ -423,23 +415,15 @@ def test_run_pipeline_update_path_end_to_end_with_status_clock():
     with tempfile.TemporaryDirectory() as t:
         d = Path(t)
         llm, _ = mk_llm()
-        r1 = run_pipeline(CFG, "auto", d, now=NOW, llm=llm, **kw)
+        r1 = run_pipeline(CFG_LIVE, "auto", d, now=NOW, llm=llm, **kw)
         new_ids = [x.story_id for x in r1["decisions"] if x.action == "NEW"]
         assert new_ids and r1["UPDATE"] == 0
         stories = load_stories(d / "state")
         sid = next(i for i in new_ids if i in stories)
-        assert {v["state"] for v in stories[sid].versions.values()} == {"pending"}      # cyclone: sensitive, parked
-        for lang, v in stories[sid].versions.items():                                   # the owner approves both drafts
-            src = d / "pending" / lang / f"{v['slug']}.md"
-            _, fm, body = src.read_text(encoding="utf-8").split("---", 2)
-            meta = yaml.safe_load(fm)
-            meta.pop("pending")
-            (d / "content" / lang).mkdir(parents=True, exist_ok=True)
-            (d / "content" / lang / src.name).write_text("---\n" + yaml.safe_dump(meta, allow_unicode=True, sort_keys=False) + "---" + body, encoding="utf-8")
-            src.unlink()
+        assert {v["state"] for v in stories[sid].versions.values()} == {"published"}    # cyclone: sensitive, but published (on_sensitive: publish)
         # same feeds an hour later: the story is known, its URLs are seen -> nothing to update, zero LLM write calls
         llm2, mock2 = mk_llm()
-        r2 = run_pipeline(CFG, "auto", d, now=NOW + timedelta(hours=3), llm=llm2, **kw)
+        r2 = run_pipeline(CFG_LIVE, "auto", d, now=NOW + timedelta(hours=3), llm=llm2, **kw)
         assert r2["UPDATE"] == 0 and not mock2.calls
         assert {v["state"] for v in load_stories(d / "state")[sid].versions.values()} == {"published"}   # reconcile saw the files
         stories = load_stories(d / "state")
@@ -455,16 +439,14 @@ def test_run_pipeline_update_path_end_to_end_with_status_clock():
         st.last_updated = iso(NOW - timedelta(hours=10))
         save_stories(d / "state", stories)
         llm3, mock3 = mk_llm()
-        r3 = run_pipeline(CFG, "auto", d, now=NOW + timedelta(hours=4), llm=llm3, **kw)
+        r3 = run_pipeline(CFG_LIVE, "auto", d, now=NOW + timedelta(hours=4), llm=llm3, **kw)
         ups = [x for x in r3["decisions"] if x.story_id == sid]
         assert ups and ups[0].action == "UPDATE", [(x.action, x.reason) for x in ups]
         after = load_stories(d / "state")[sid]
         assert after.updates and after.fact_sheet_version == 2 and after.last_updated == iso(NOW + timedelta(hours=4))
         assert r3["updates"][sid].status == "ok" and any(c["task"].startswith("write") for c in mock3.calls)
-        # still a sensitive story: the update is parked, the approved article stays live and unchanged
-        assert {v.get("update_state") for v in after.versions.values()} == {"pending"}
         assert all(v["state"] == "published" for v in after.versions.values())
         # no news for 3 days -> stable; a week -> closed (real runs advance the clock)
-        run_pipeline(CFG, "auto", d, now=NOW + timedelta(days=4), llm=mk_llm()[0], embedder=mock_embedder,
+        run_pipeline(CFG_LIVE, "auto", d, now=NOW + timedelta(days=4), llm=mk_llm()[0], embedder=mock_embedder,
                      article_fetcher=kw["article_fetcher"], feed_fetcher=lambda *a, **k: (_ for _ in ()).throw(OSError("offline")))
         assert load_stories(d / "state")[sid].status == "stable"

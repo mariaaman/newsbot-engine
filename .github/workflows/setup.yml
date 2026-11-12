@@ -50,7 +50,6 @@ jobs:
           BRAIN_REPO_TOKEN: ${{ secrets.BRAIN_REPO_TOKEN }}
           BRAIN_REPO: ${{ vars.BRAIN_REPO }}
           PAGES_PROJECT: ${{ vars.PAGES_PROJECT }}
-          PUBLISH_MODE: ${{ vars.PUBLISH_MODE }}
         run: python scripts/setup_check.py brain
       - name: Brain config is valid
         if: always()

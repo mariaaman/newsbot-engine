@@ -1,4 +1,4 @@
-"""Telegram notifications: one chat for every step result (ok / fail / error / skip) and for review requests.
+"""Telegram notifications: one chat for every step result (ok / fail / error / skip) and one quiet line per published article.
 
 Best effort by design: a problem here is logged as a status code or an exception TYPE and never fails a run.
 The bot token sits inside the Telegram API URL, so exception text is never logged (it would contain the URL).
@@ -6,8 +6,6 @@ The chat itself is private and may carry titles and summaries; workflow logs (pu
 stdlib only (PyYAML is optional) so the notify step still works when the engine's dependencies failed to install."""
 from __future__ import annotations
 
-import hashlib
-import hmac
 import html
 import json
 import logging
@@ -26,30 +24,17 @@ API = "https://api.telegram.org"          # VERIFY
 LIMIT = 3800                              # characters per message (Telegram allows 4096)
 ICON = {"ok": "✅", "fail": "❌", "error": "🛑", "skip": "⏭"}
 OUTCOME = {"success": "ok", "failure": "fail", "skipped": "skip", "cancelled": "error"}    # GitHub step outcome -> status
-DEFAULTS = {"enabled": True, "language": "bn", "report_idle_runs": True, "include_summary": True, "max_lines": 60,
-            "approve_buttons": False, "edit_url": ""}
+DEFAULTS = {"enabled": True, "language": "bn", "report_idle_runs": True, "include_summary": True, "max_lines": 60}
 
 T = {
     "bn": {"ok": "সফল", "fail": "ব্যর্থ", "error": "ত্রুটি", "skip": "বাদ", "workflow": "Workflow-এর ধাপ",
-           "engine": "ইঞ্জিনের ধাপ", "review_new": "রিভিউ দরকার: নতুন লেখা", "review_update": "রিভিউ দরকার: আপডেট",
-           "pending": "অপেক্ষমাণ খসড়া, মানুষের সিদ্ধান্ত দরকার", "published": "প্রকাশিত হয়েছে", "dry": "ড্রাই-রান, কিছুই প্রকাশ হয়নি",
-           "reasons": "কারণ", "sources": "সূত্র", "open_pr": "PR খুলুন", "files": "লেখা দেখুন", "open_draft": "খসড়া খুলুন",
-           "no_pr": "PR-এর লিংক পাওয়া যায়নি: brain repo-র Pull requests দেখুন", "more": "… আরও {n}টি লাইন",
-           "run_link": "Run দেখুন", "story": "খবর", "no_report": "ইঞ্জিন কোনো রিপোর্ট বানায়নি",
-           "pending_hint": "প্রকাশ করতে: ফাইলটি content/{lang}/-এ সরান আর pending: অংশ মুছুন",
-           "approve": "✅ অনুমোদন", "reject": "❌ বাতিল", "pending_buttons": "নিচের বাটনে অনুমোদন বা বাতিল করুন (অনুমোদন করলেই প্রকাশ হবে)",
-           "pending_gate": "মান-যাচাইয়ে ব্যর্থ: অনুমোদনের বাটন নেই, শুধু বাতিল করা যায়",
-           "edit": "👁 দেখুন ও সম্পাদনা", "pending_edit": "লিংকে খুলে পড়ুন, দরকারে সম্পাদনা করে সংরক্ষণ করুন, তারপর অনুমোদন দিন"},
+           "engine": "ইঞ্জিনের ধাপ", "published": "প্রকাশিত হয়েছে", "dry": "ড্রাই-রান, কিছুই প্রকাশ হয়নি",
+           "reasons": "কারণ", "sources": "সূত্র", "more": "… আরও {n}টি লাইন",
+           "run_link": "Run দেখুন", "story": "খবর", "no_report": "ইঞ্জিন কোনো রিপোর্ট বানায়নি"},
     "en": {"ok": "ok", "fail": "fail", "error": "error", "skip": "skip", "workflow": "Workflow steps",
-           "engine": "Engine steps", "review_new": "Review needed: new article", "review_update": "Review needed: update",
-           "pending": "Pending draft, needs a human decision", "published": "Published", "dry": "Dry run, nothing published",
-           "reasons": "Reasons", "sources": "Sources", "open_pr": "Open PR", "files": "View article", "open_draft": "Open draft",
-           "no_pr": "No PR link available: see Pull requests in the brain repo", "more": "… {n} more lines",
-           "run_link": "View run", "story": "Story", "no_report": "the engine produced no report",
-           "pending_hint": "To publish: move the file to content/{lang}/ and delete the pending: block",
-           "approve": "✅ Approve", "reject": "❌ Reject", "pending_buttons": "Use the buttons below to approve or reject (approving publishes it)",
-           "pending_gate": "Failed a quality gate: no Approve button, you can only reject",
-           "edit": "👁 View and edit", "pending_edit": "Open the link to read, edit and save if needed, then approve"},
+           "engine": "Engine steps", "published": "Published", "dry": "Dry run, nothing published",
+           "reasons": "Reasons", "sources": "Sources", "more": "… {n} more lines",
+           "run_link": "View run", "story": "Story", "no_report": "the engine produced no report"},
 }
 
 
@@ -166,7 +151,7 @@ def is_idle(report: Report | None, steps: list[tuple[str, str]]) -> bool:
     if report is None:
         return not bad
     c = report.counts()
-    return not (bad or c["fail"] or c["error"] or report.reviews or report.covered_stories())
+    return not (bad or c["fail"] or c["error"] or report.items or report.covered_stories())
 
 
 def format_report(report: Report | None, steps: list[tuple[str, str]], lang: str, tz: float, max_lines: int,
@@ -193,7 +178,7 @@ def format_report(report: Report | None, steps: list[tuple[str, str]], lang: str
         lines.append(f"{ICON['skip']} run — {t['no_report']}")
     else:
         order = {s: i for i, s in enumerate(STEP_ORDER)}
-        titles = {r["story_id"]: r["title"] for r in report.reviews}
+        titles = {r["story_id"]: r["title"] for r in report.items}
 
         def line(e, indent=""):
             lang_tag = f"[{_e(e['lang'])}]" if e["lang"] else ""
@@ -218,44 +203,10 @@ def format_report(report: Report | None, steps: list[tuple[str, str]], lang: str
     return "\n".join(lines)
 
 
-def draft_ref(slug: str) -> str:
-    """Short, stable id of a pending draft for Telegram callback_data (limit 64 bytes). The approve Worker computes the
-    same value (SHA-1 of the slug, first 10 hex chars) from the file names in pending/<lang>/."""
-    return hashlib.sha1(slug.encode("utf-8")).hexdigest()[:10]
-
-
-def edit_link(base: str, token: str, lang: str, ref: str) -> str:
-    """Private link to the approve Worker's page for one draft. The signature is an HMAC of "lang|ref" keyed from the bot
-    token, which the Worker also holds, so no extra secret is needed. It opens one draft only and dies when it is handled."""
-    key = hashlib.sha256(("newsbot-edit|" + token).encode("utf-8")).digest()
-    sig = hmac.new(key, f"{lang}|{ref}".encode("utf-8"), hashlib.sha256).hexdigest()
-    return f"{base.rstrip('/')}/d/{lang}/{ref}?s={sig}"
-
-
-def _safe_base(url: str) -> str:
-    url = (url or "").strip().rstrip("/")
-    return url if re.fullmatch(r"https://[A-Za-z0-9.-]+(:[0-9]+)?", url) else ""
-
-
-def approvable(item: dict) -> bool:
-    """Only drafts held back for being sensitive may be approved from the phone. A draft that failed a quality gate
-    (unsupported name, figure, quote, too short ...) can be rejected or opened, never approved here."""
-    reasons = item.get("reasons") or []
-    return bool(reasons) and all(str(r).startswith("sensitive:") for r in reasons)
-
-
-def format_review(item: dict, lang: str, include_summary: bool, pr_url: str, draft_url: str,
-                  approve: bool = False, edit_url: str = "") -> tuple[str, list, bool]:
-    """Returns (text, buttons, silent). Actionable items make a sound; published/dry-run ones do not."""
-    t, st = T[lang], item["status"]
-    if st == "awaiting_review":
-        head, silent = f"📝 <b>{t['review_update'] if item['kind'] == 'update' else t['review_new']}</b>", False
-    elif st == "pending":
-        head, silent = f"⚠️ <b>{t['pending']}</b>", False
-    elif st == "published":
-        head, silent = f"🟢 <b>{t['published']}</b>", True
-    else:
-        head, silent = f"🧪 <b>{t['dry']}</b>", True
+def format_item(item: dict, lang: str, include_summary: bool) -> tuple[str, bool]:
+    """(text, silent): one message per article written this run. Published and dry-run items are quiet."""
+    t = T[lang]
+    head = f"🟢 <b>{t['published']}</b>" if item["status"] == "published" else f"🧪 <b>{t['dry']}</b>"
     lines = [f"{head} [{_e(item['lang'])}]", f"<b>{_e(item['title'], 200)}</b>"]
     if include_summary and item.get("summary"):
         lines.append(_e(item["summary"], 300))
@@ -264,24 +215,7 @@ def format_review(item: dict, lang: str, include_summary: bool, pr_url: str, dra
     srcs = [f"{s['name']} (T{s['tier']})" for s in item.get("sources", [])[:6] if s.get("name")]
     if srcs:
         lines.append(f"{t['sources']}: {_e(', '.join(srcs), 300)}")
-    buttons: list = []
-    if st == "awaiting_review":
-        if pr_url:
-            buttons = [[{"text": t["open_pr"], "url": pr_url}, {"text": t["files"], "url": pr_url + "/files"}]]
-        else:
-            lines.append(t["no_pr"])
-    elif st == "pending":
-        view = [[{"text": t["edit"], "url": edit_url}]] if edit_url else [[{"text": t["open_draft"], "url": draft_url}]] if draft_url else []
-        if approve and item.get("slug") and re.fullmatch(r"[a-z]{2,3}", str(item.get("lang", ""))):
-            ref, can = draft_ref(item["slug"]), approvable(item)
-            row = ([{"text": t["approve"], "callback_data": f"a|{item['lang']}|{ref}"}] if can else []) \
-                + [{"text": t["reject"], "callback_data": f"r|{item['lang']}|{ref}"}]
-            buttons = [row] + view
-            lines.append(t["pending_gate"] if not can else t["pending_edit"] if edit_url else t["pending_buttons"])
-        else:
-            buttons = view
-            lines.append(t["pending_edit"] if edit_url else t["pending_hint"].format(lang=item["lang"]))
-    return "\n".join(lines), buttons, silent
+    return "\n".join(lines), True
 
 
 # ---------------- the command ----------------
@@ -291,9 +225,9 @@ def _safe_url(url: str, server: str) -> str:
     return url if url.startswith(server + "/") and not re.search(r"\s", url) else ""
 
 
-def notify_cmd(brain: str | Path, report_path: str | None, pr_url_file: str | None, workflow: str,
+def notify_cmd(brain: str | Path, report_path: str | None, workflow: str,
                env=os.environ, transport=None, sleep=time.sleep, now: datetime | None = None) -> int:
-    """Sends the run report (quiet) and one message per review item. Always returns 0: never fails the workflow."""
+    """Sends the run report and one quiet message per article. Always returns 0: never fails the workflow."""
     try:
         s = load_notify_settings(brain)
         token, chat = env.get("TELEGRAM_BOT_TOKEN", ""), env.get("TELEGRAM_CHAT_ID", "")
@@ -307,13 +241,6 @@ def notify_cmd(brain: str | Path, report_path: str | None, pr_url_file: str | No
         if report is None and any(n == "run" and st in ("fail", "error") for n, st in steps):
             report = Report()
             report.add("run", "error", T[s["language"]]["no_report"])
-        pr_url = ""
-        if pr_url_file:
-            try:
-                pr_url = _safe_url(Path(pr_url_file).read_text(encoding="utf-8"), server)
-            except OSError:
-                pass
-        repo = env.get("BRAIN_REPO", "")
         tg = Telegram(token, chat, transport=transport, sleep=sleep, pause=0 if transport is not None else 1.0)
         sent = 0
         if s["report_idle_runs"] or not is_idle(report, steps):
@@ -321,15 +248,9 @@ def notify_cmd(brain: str | Path, report_path: str | None, pr_url_file: str | No
             text = format_report(report, steps, s["language"], float(s["tz"]), int(s["max_lines"]), workflow, run_url, now)
             loud = any(st in ("fail", "error") for _, st in steps) or bool(report and (report.counts()["error"] or report.counts()["fail"]))
             sent += tg.send(text, silent=not loud)
-        for item in (report.reviews if report else []):
-            draft = f"{server}/{repo}/blob/main/pending/{item['lang']}/{item['slug']}.md" if repo and item["status"] == "pending" else ""
-            edit = ""
-            if item["status"] == "pending" and item.get("slug") and _safe_base(s.get("edit_url", "")) \
-                    and re.fullmatch(r"[a-z]{2,3}", str(item.get("lang", ""))):
-                edit = edit_link(_safe_base(s["edit_url"]), token, item["lang"], draft_ref(item["slug"]))
-            text, buttons, silent = format_review(item, s["language"], bool(s["include_summary"]), pr_url, draft,
-                                                    bool(s.get("approve_buttons")), edit)
-            sent += tg.send(text, buttons, silent)
+        for item in (report.items if report else []):
+            text, silent = format_item(item, s["language"], bool(s["include_summary"]))
+            sent += tg.send(text, [], silent)
         log.info("telegram sent=%d", sent)
     except Exception as e:                              # type only: the text may carry the token
         log.warning("telegram notify failed: %s", type(e).__name__)
