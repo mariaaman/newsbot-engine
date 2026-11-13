@@ -143,7 +143,7 @@ def test_setup_workflow_runs_the_checks_and_prints_status_only():
 def test_only_keepalive_and_the_two_helper_workflows_write():
     for f in FILES:
         perms = load(f)["permissions"]
-        assert (perms.get("contents") == "write") == (f.name in ("keepalive.yml", "unzip.yml", "pin-actions.yml")), f.name
+        assert (perms.get("contents") == "write") == (f.name in ("keepalive.yml", "unzip.yml", "pin-actions.yml", "cleanup.yml")), f.name
 
 
 def test_ci_builds_hugo_and_runs_pytest():
@@ -281,3 +281,28 @@ def test_llm_check_workflow_saves_its_result_to_the_brain_and_fails_when_an_acco
     assert any("brain_commit.sh brain state" in s.get("run", "") and s.get("if") == "always()" for s in st)
     assert next(s for s in st if s.get("id") == "check").get("continue-on-error") is True
     assert any('test "$CHECK_OUTCOME" = "success"' in s.get("run", "") for s in st)
+
+
+def test_cleanup_workflow_and_obsolete_list_stay_honest():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("cleanup_repo", ROOT / "scripts" / "cleanup_repo.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        for rel in m.OBSOLETE_ENGINE:
+            p = root / rel
+            (p / "x.md" if rel in ("worker", "brain-template/pending") else p).parent.mkdir(parents=True, exist_ok=True)
+            (p / "x.md" if rel in ("worker", "brain-template/pending") else p).parent.mkdir(parents=True, exist_ok=True)
+            if rel in ("worker", "brain-template/pending"):
+                (p / "x.md").write_text("x")
+            else:
+                p.write_text("x")
+        (root / "keep.txt").write_text("k")
+        assert len(m.clean_engine(root)) == len(m.OBSOLETE_ENGINE) and (root / "keep.txt").exists()
+        assert m.clean_engine(root) == []                                          # second run: nothing left
+    for rel in m.OBSOLETE_ENGINE:
+        assert not (ROOT / rel).exists(), rel                                      # the shipped tree is already clean
+    on = load(WF_DIR / "cleanup.yml")["on"]["workflow_dispatch"]["inputs"]
+    assert set(on) == {"clean_brain", "delete_pending"}
+    assert on["delete_pending"]["default"] is False       # never deletes drafts unasked

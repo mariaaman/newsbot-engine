@@ -6,3 +6,4 @@ Docs: docs/GO_LIVE.md sections 7 and 8, docs/ADSTERRA.md.
 Patch on your multi-account Workers AI version (2026-10-31): truncation-aware retry, verify max_tokens by claim count, limits.max_run_minutes, accounts-file cleanup in hourly. docs/GO_LIVE.md section 10.
 
 v22 (fresh clean-up): removed review mode, pending/ drafts and triage, PR flow, Telegram approve buttons and Worker, dashboard drafts tab and PR list. Cancelled drafts are archived in rejected/<lang>/ (dashboard tab "বাতিল", read only). Old configs (publish.mode, on_failure: pending, approve_buttons, edit_url) still load and are ignored/mapped. Old pending/ drafts in the brain are left untouched and ignored; old awaiting_review states are tidied on the next run.
+v22+: cleanup workflow (Actions, cleanup) removes files left by older versions; optional brain tidy.
