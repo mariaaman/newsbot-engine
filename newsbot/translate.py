@@ -60,8 +60,14 @@ def build_messages(lead: dict, lang: str, cfg, brain) -> list[dict]:
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
+def translate_max_tokens(cfg) -> int:
+    """A translation is as long as the article and the model also spends tokens thinking: 1.5x the write limit
+    (a real run lost its Spanish edition to two cut-off answers at the plain limit)."""
+    return int(cfg.write.max_tokens * 1.5)
+
+
 def estimate_translate_tokens(lead: dict, lang: str, cfg, brain) -> int:
-    return estimate_tokens(build_messages(lead, lang, cfg, brain), cfg.write.max_tokens)
+    return estimate_tokens(build_messages(lead, lang, cfg, brain), translate_max_tokens(cfg))
 
 
 def _entries(a: dict) -> list[tuple[str, str]]:
@@ -79,8 +85,10 @@ def _sentences(a: dict) -> set[str]:
 def untranslated(lead: dict, art: dict) -> list[str]:
     """Fields the model handed back still in the lead's words (a recurring slip: the body is translated, the timeline and fact lists are
     not; or one body sentence is left in English). "body" = a whole sentence of six or more words copied unchanged."""
-    mine = {t.strip() for _k, t in _entries(art) if len(t.strip()) >= 8}
-    out = {k for k, t in _entries(lead) if len(t.strip()) >= 8 and t.strip() in mine}
+    def real(t: str) -> bool:                                  # a bare date or clock time ("2026-10-13 17:00 UTC") reads the same in every language
+        return len(t.strip()) >= 8 and not re.fullmatch(r"[\d\s:/.,\-]*(UTC|GMT)?[\d\s:/.,\-]*", t.strip())
+    mine = {t.strip() for _k, t in _entries(art) if real(t)}
+    out = {k for k, t in _entries(lead) if real(t) and t.strip() in mine}
     if _sentences(lead) & _sentences(art):
         out.add("body")
     return sorted(out)
@@ -90,7 +98,7 @@ def translate_article(llm, brain, cfg, fs, lang: str, lead: dict) -> tuple[dict,
     """(normalised article in `lang`, sanitiser removals). Raises BudgetExhausted / LLMError like write_article.
     If the lists came back untranslated, ONE more try says so (the extra cost only occurs when the slip does)."""
     msgs = build_messages(lead, lang, cfg, brain)
-    raw = llm.complete(f"translate_{lang}", msgs, schema=validate_article, max_tokens=cfg.write.max_tokens)
+    raw = llm.complete(f"translate_{lang}", msgs, schema=validate_article, max_tokens=translate_max_tokens(cfg))
     try:
         left = untranslated(lead, validate_article(dict(raw)))
     except ValueError:
@@ -99,7 +107,7 @@ def translate_article(llm, brain, cfg, fs, lang: str, lead: dict) -> tuple[dict,
         msgs = msgs + [{"role": "assistant", "content": json.dumps(raw, ensure_ascii=False)},
                        {"role": "user", "content": "These fields are still in the source language: " + ", ".join(left) +
                         f". Return the complete JSON again with EVERY field in {LANG_NAMES.get(lang, lang)}."}]
-        raw = llm.complete(f"translate_{lang}", msgs, schema=validate_article, max_tokens=cfg.write.max_tokens)
+        raw = llm.complete(f"translate_{lang}", msgs, schema=validate_article, max_tokens=translate_max_tokens(cfg))
     raw = dict(raw)
     raw["slug"], raw["category"] = lead["slug"], lead["category"]          # the lead decides these; a translation never does
     raw["sources"] = [{"id": s["id"]} for s in lead["sources"]]

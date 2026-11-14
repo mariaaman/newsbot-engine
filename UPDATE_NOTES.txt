@@ -7,3 +7,5 @@ Patch on your multi-account Workers AI version (2026-10-31): truncation-aware re
 
 v22 (fresh clean-up): removed review mode, pending/ drafts and triage, PR flow, Telegram approve buttons and Worker, dashboard drafts tab and PR list. Cancelled drafts are archived in rejected/<lang>/ (dashboard tab "বাতিল", read only). Old configs (publish.mode, on_failure: pending, approve_buttons, edit_url) still load and are ignored/mapped. Old pending/ drafts in the brain are left untouched and ignored; old awaiting_review states are tidied on the next run.
 v22+: cleanup workflow (Actions, cleanup) removes files left by older versions; optional brain tidy.
+
+v23: update path uses the English lead + translations (22 calls -> ~6); translations get 1.5x max_tokens; date-only timeline times are ignored by the untranslated check.

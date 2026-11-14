@@ -217,16 +217,38 @@ def _learn_from(fs, lang, art, qa, verdicts, autofixed: bool, lead=None) -> None
                       "fact_numbers": sorted({n for f in fs.facts for n in __import__("newsbot.extract", fromlist=["numbers_in"]).numbers_in(f.statement)})[:25]})
 
 
+def _can_translate_update(prev, lead_prev, lead_res) -> bool:
+    """An update of one language can be a translation of the updated lead when the lead's change is only new text and
+    timeline entries (a translation carries no corrections block), and both editions have a previous version."""
+    if prev is None or lead_prev is None:
+        return prev is None                      # a language added by the update is translated like a new story
+    lead_art = getattr(lead_res, "article", None)
+    if lead_art is None:
+        return True                              # decided later: a lead without an article skips everyone
+    return len(lead_art.get("corrections", [])) <= len(lead_prev.get("corrections", []))
+
+
 def produce_articles(fs: FactSheet, languages: list[str], cfg, brain, llm, *, embedder=None, recent_by_lang=None,
                      previous: dict | None = None, now=None) -> dict[str, ArticleResult]:
-    """previous: lang -> currently published article (update flow); languages without an entry are written fresh."""
+    """previous: lang -> currently published article (update flow); languages without an entry are written fresh.
+    With write.translate_from set, the lead edition is written first and the others are translated from it, for updates too
+    (one real update wrote five editions separately and every one failed a gate: 22 calls for nothing). A language
+    whose edition would need a correction notice the translation cannot carry is written on its own."""
     results: dict[str, ArticleResult] = {}
     lead = getattr(cfg.write, "translate_from", "") or ""
-    use_translation = bool(lead and lead in languages and len(languages) > 1 and not previous)
+    use_translation = bool(lead and lead in languages and len(languages) > 1)
     order = ([lead] + [l for l in languages if l != lead]) if use_translation else list(languages)
     for lang in order:
         tr = use_translation and lang != lead
         lead_art = None
+        if tr and previous and not _can_translate_update(previous.get(lang), previous.get(lead), results.get(lead)):
+            tr = False
+        if use_translation and lang != lead and not tr:
+            lr = results.get(lead)
+            if lr is None or lr.article is None or lr.qa is None or lr.qa.failures:       # a failed lead means no update at all
+                results[lang] = ArticleResult(lang, "skipped_lead")
+                DIAG.add("article", story=fs.story_id, lang=lang, status="skipped_lead")
+                continue
         if tr:
             lr = results.get(lead)
             if lr is None or lr.article is None or lr.qa is None or lr.qa.failures:       # a lead that failed a gate is not translated
@@ -257,6 +279,11 @@ def produce_articles(fs: FactSheet, languages: list[str], cfg, brain, llm, *, em
             DIAG.add("article", story=fs.story_id, lang=lang, status="write_failed", reason=type(e).__name__)
             continue
         prev = previous.get(lang) if previous else None
+        if prev is not None and tr:
+            art = dict(art)
+            lp = previous.get(lead)
+            n_new = len(lead_art["timeline"]) - len(lp["timeline"])           # entries the lead added in this update
+            art["timeline"] = art["timeline"][-n_new:] if n_new > 0 else []
         if prev is not None:
             from newsbot.update import finalize_update
             art = finalize_update(art, prev, lang, now or utcnow())

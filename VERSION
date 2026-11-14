@@ -1,1 +1,1 @@
-v22: fresh clean-up. Nothing waits for a human: no review mode, no pending/, no PR flow, no Telegram approve Worker. Publish or cancel (rejected/). Dashboard: cancelled-drafts tab. Includes v21 (hourly publishes by default).
+v23: updates are written in English and translated (not 5 separate writes); translation max_tokens x1.5 (Spanish cut-off); bare dates no longer count as untranslated.

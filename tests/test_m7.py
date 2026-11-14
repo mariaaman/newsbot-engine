@@ -450,3 +450,30 @@ def test_run_pipeline_update_path_end_to_end_with_status_clock():
         run_pipeline(CFG_LIVE, "auto", d, now=NOW + timedelta(days=4), llm=mk_llm()[0], embedder=mock_embedder,
                      article_fetcher=kw["article_fetcher"], feed_fetcher=lambda *a, **k: (_ for _ in ()).throw(OSError("offline")))
         assert load_stories(d / "state")[sid].status == "stable"
+
+
+def test_an_update_writes_the_lead_and_translates_the_other_editions():
+    """A real update wrote five editions separately and every one failed a gate (22 calls). Now: en is written, bn is translated."""
+    with tempfile.TemporaryDirectory() as t:
+        d = brain_with_story(t)
+        cfg = make_cfg(write={"translate_from": "en"})
+        llm, mock = mk_llm()
+        dec, out = do_update(d, NEW_PAGES, NEW_ITEMS, llm, route=("en", "bn"), cfg=cfg)
+        oc = out[FS.story_id]
+        tasks = [c["task"] for c in mock.calls]
+        assert "write_en" in tasks and "translate_bn" in tasks and "write_bn" not in tasks, tasks
+        assert oc.status == "ok" and sorted(oc.updated) == ["bn", "en"]
+        st = load_stories(d / "state")[FS.story_id]
+        fm_en = load_published(d, "en", st.versions["en"]["slug"])[0]
+        fm_bn, _ = load_published(d, "bn", st.versions["bn"]["slug"])
+        assert len(fm_bn["timeline"]) == len(fm_en["timeline"])                 # old entries kept, only the new one added
+        assert fm_bn["lastmod"] != iso(NOW)
+
+
+def test_translation_is_not_used_when_the_lead_adds_a_correction():
+    from newsbot.articles import _can_translate_update
+    lead_prev = {"corrections": []}
+    res = type("R", (), {"article": {"corrections": [{"said": "a", "correct": "b"}]}})()
+    assert _can_translate_update({"x": 1}, lead_prev, res) is False
+    assert _can_translate_update({"x": 1}, lead_prev, type("R", (), {"article": {"corrections": []}})()) is True
+    assert _can_translate_update(None, None, res) is True                         # a language added by the update
