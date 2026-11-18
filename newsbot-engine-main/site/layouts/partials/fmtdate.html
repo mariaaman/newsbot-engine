@@ -1,3 +1,0 @@
-{{- /* ISO string or time -> "2 Jan 2006, 15:04 UTC"; anything else is printed as is (escaped) */ -}}
-{{- $s := printf "%v" . -}}
-{{- if findRE `^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}` $s -}}{{ time.Format "2 Jan 2006, 15:04 MST" (time.AsTime .) }}{{- else -}}{{ $s }}{{- end -}}
