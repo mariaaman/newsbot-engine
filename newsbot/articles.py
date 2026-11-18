@@ -16,7 +16,7 @@ from newsbot import langs as L
 from newsbot.diag import DIAG, detail_counts
 from newsbot.qa import QAResult, offending_terms, run_gates
 from newsbot.state import _atomic_write
-from newsbot.translate import estimate_translate_tokens, translate_article
+from newsbot.translate import feedback_for as translate_feedback, estimate_translate_tokens, translate_article
 from newsbot.write import estimate_write_tokens, to_markdown_file, write_article
 
 log = logging.getLogger("newsbot.articles")
@@ -279,19 +279,37 @@ def produce_articles(fs: FactSheet, languages: list[str], cfg, brain, llm, *, em
             DIAG.add("article", story=fs.story_id, lang=lang, status="write_failed", reason=type(e).__name__)
             continue
         prev = previous.get(lang) if previous else None
-        if prev is not None and tr:
-            art = dict(art)
-            lp = previous.get(lead)
-            n_new = len(lead_art["timeline"]) - len(lp["timeline"])           # entries the lead added in this update
-            art["timeline"] = art["timeline"][-n_new:] if n_new > 0 else []
-        if prev is not None:
-            from newsbot.update import finalize_update
-            art = finalize_update(art, prev, lang, now or utcnow())
+        def _finish(a: dict) -> dict:
+            """What an update adds on top of a fresh article: the old timeline and corrections are kept, same slug and category."""
+            if prev is not None and tr:
+                a = dict(a)
+                lp = previous.get(lead)
+                n_new = len(lead_art["timeline"]) - len(lp["timeline"])           # entries the lead added in this update
+                a["timeline"] = a["timeline"][-n_new:] if n_new > 0 else []
+            if prev is not None:
+                from newsbot.update import finalize_update
+                a = finalize_update(a, prev, lang, now or utcnow())
+            return a
+
+        art = _finish(art)
         recent = (recent_by_lang or {}).get(lang)
         if recent is None:
             recent = load_recent_articles(brain, lang, cfg.qa.recent_articles_checked)
         qa = run_gates(art, fs, lang, cfg, recent=recent, embedder=embedder, llm=llm, brain=brain, previous=prev, lead=lead_art)
         _gate_record(fs, lang, "draft", art, qa)
+        fb = tr and translate_feedback(qa.failures)
+        if fb:                          # a plain fidelity slip (an added figure, a sentence left untranslated): ask once more, naming it
+            try:
+                if llm.can_run(task, est):
+                    art2, removed2 = translate_article(llm, brain, cfg, fs, lang, lead_art, feedback=fb)
+                    art2 = _finish(art2)
+                    qa2 = run_gates(art2, fs, lang, cfg, recent=recent, embedder=embedder, llm=llm, brain=brain, previous=prev, lead=lead_art)
+                    _gate_record(fs, lang, "retry", art2, qa2)
+                    log.info("translation retry story=%s lang=%s before=%s after=%s", fs.story_id, lang, ",".join(qa.failures), ",".join(qa2.failures) or "-")
+                    if len(qa2.failures) < len(qa.failures):
+                        art, qa, removed = art2, qa2, removed2
+            except (BudgetExhausted, LLMError):
+                pass
         verdicts: dict = {}
         if "unsupported_name" in qa.failures and getattr(cfg.qa, "diagnose", True):
             from newsbot.diagnose import diagnose_names

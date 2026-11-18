@@ -183,7 +183,11 @@ STARTERS = set("""the a an with without neither nor either both after before dur
 among despite although though because since until according however meanwhile several many some most all large small new major recent early
 late first second third last other another each every no not only also but and or if then once following amid across against along around
 beyond inside outside near within upon toward towards per via than that this these those their its his her our your such what which who why how""".split())
-_ABBR = {"uk", "u.k", "eu", "un", "u.n"}
+_ABBR = {"uk", "u.k", "eu", "un", "u.n", "mou", "adiz", "ceo", "cfo", "gdp", "ai", "ipo", "eez", "vat"}
+# Compass / region words and spelled-out numbers: ordinary English, not names ("Middle East", "East Asian", "Nineteen-year-old").
+GENERIC_WORDS = set("""east west north south middle central europe asia africa americas pacific atlantic arctic caribbean mediterranean
+one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty thirty forty
+fifty sixty seventy eighty ninety hundred thousand million billion first second third fourth fifth""".split())
 _HYPHENS = re.compile("[\u2010\u2011\u2012\u2013\u2014\u2212-]")
 
 
@@ -219,7 +223,7 @@ def unsupported_names(text: str, vocab: set[str]) -> list[str]:
                         continue                                      # Europe / European, Syria / Syrian: the same word in another form
                     if lw in DATE_WORDS or lw in vocab or lw.rstrip("s") in vocab:
                         continue
-                    if lw in ROLE_WORDS or lw in lowered or lw.rstrip("s") in lowered:
+                    if lw in ROLE_WORDS or lw in GENERIC_WORDS or lw in lowered or lw.rstrip("s") in lowered:
                         continue
                     if learned.name_ok(w, vocab):
                         continue                                      # a rule learned from an earlier failure (newsbot/learned.py)
@@ -227,6 +231,11 @@ def unsupported_names(text: str, vocab: set[str]) -> list[str]:
                         continue                                      # "US" for a fact sheet that says U.S. / United States
                     bad.append(w)
     return sorted(set(bad))
+
+
+def _claim_in_facts(claim: str, known_numbers: set[str]) -> bool:
+    nums = numbers_in(claim)
+    return bool(nums) and not extra_numbers(nums, known_numbers)
 
 
 def ngrams(ws: list[str], n: int) -> set[tuple]:
@@ -444,6 +453,8 @@ def run_gates(a: dict, fs: FactSheet, lang: str, cfg, *, recent: list | None = N
         else:
             try:
                 bad = llm_check(llm, brain, a, fs)
+                known = fact_vocab(fs)[0]
+                bad = [c for c in bad if not _claim_in_facts(c, known)]     # a figure the fact sheet itself lists (e.g. a disputed one) is no invention
                 if bad:
                     fail("unsupported_claims", count=len(bad), unsupported=bad)
             except BudgetExhausted:

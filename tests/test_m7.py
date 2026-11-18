@@ -477,3 +477,17 @@ def test_translation_is_not_used_when_the_lead_adds_a_correction():
     assert _can_translate_update({"x": 1}, lead_prev, res) is False
     assert _can_translate_update({"x": 1}, lead_prev, type("R", (), {"article": {"corrections": []}})()) is True
     assert _can_translate_update(None, None, res) is True                         # a language added by the update
+
+
+def test_translation_feedback_only_for_fidelity_slips():
+    from newsbot.translate import feedback_for
+    assert "number" in feedback_for(["translation_added_number"])
+    assert "source language" in feedback_for(["translation_untranslated"])
+    assert feedback_for(["translation_added_number", "unsupported_name"]) == ""
+    assert feedback_for([]) == ""
+
+
+def test_generic_words_and_known_claim_figures():
+    from newsbot.qa import unsupported_names, _claim_in_facts
+    assert unsupported_names("Stability in the Middle‑East and East Asian waters. Nineteen‑year‑old wins. The MOU holds.", {"stability"}) == []
+    assert _claim_in_facts("Profit was $25 billion", {"25"}) and not _claim_in_facts("Profit was $26 billion", {"25"})

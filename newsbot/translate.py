@@ -94,10 +94,13 @@ def untranslated(lead: dict, art: dict) -> list[str]:
     return sorted(out)
 
 
-def translate_article(llm, brain, cfg, fs, lang: str, lead: dict) -> tuple[dict, int]:
+def translate_article(llm, brain, cfg, fs, lang: str, lead: dict, feedback: str = "") -> tuple[dict, int]:
     """(normalised article in `lang`, sanitiser removals). Raises BudgetExhausted / LLMError like write_article.
     If the lists came back untranslated, ONE more try says so (the extra cost only occurs when the slip does)."""
     msgs = build_messages(lead, lang, cfg, brain)
+    if feedback:                                                # a second try after a fidelity gate refused the first one
+        msgs = msgs + [{"role": "user", "content": "Your previous translation was refused by the checker: " + feedback +
+                        " Translate the English article again, with the same rules, and return the complete JSON object."}]
     raw = llm.complete(f"translate_{lang}", msgs, schema=validate_article, max_tokens=translate_max_tokens(cfg))
     try:
         left = untranslated(lead, validate_article(dict(raw)))
@@ -127,3 +130,18 @@ def fidelity(lead: dict, art: dict) -> list[str]:
     if set(_MARKER.findall(article_text(art))) - set(_MARKER.findall(article_text(lead))):
         out.append("translation_markers")                     # a citation the lead does not have
     return out
+
+
+FIDELITY_FEEDBACK = {
+    "translation_added_number": "it contained a number that is not in the English article. Use ONLY numbers that appear in the English article; "
+                                "do not calculate, convert, round or estimate anything, and do not turn a word into a number.",
+    "translation_untranslated": "parts were left in the source language. Translate every field and every sentence (names of people and places excepted).",
+    "translation_markers": "it used a citation marker [S#] that the English article does not use. Use only the markers the English article uses.",
+}
+
+
+def feedback_for(failures) -> str:
+    """Text for the one retry of a translation, or "" when a failure is not a plain fidelity slip."""
+    if not failures or not set(failures) <= set(FIDELITY_FEEDBACK):
+        return ""
+    return " ".join(FIDELITY_FEEDBACK[f] for f in failures)
