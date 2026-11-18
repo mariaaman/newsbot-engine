@@ -1,0 +1,76 @@
+name: cleanup
+# One-click tidy-up after an update (unzip never deletes files): removes the files older versions left behind in this repo,
+# and optionally the old review-era leftovers in the brain repo (open "Review:" pull requests, review/* branches, pending/ drafts).
+# Needs the WORKFLOW_PAT secret (the same token unzip.yml uses, allowed to change workflow files).
+on:
+  workflow_dispatch:
+    inputs:
+      clean_brain:
+        description: "Also tidy the brain repo: close old Review PRs and delete review/* branches"
+        type: boolean
+        default: true
+      delete_pending:
+        description: "Brain repo: DELETE the old pending/ drafts (not published, ~55 files). Leave off to keep them"
+        type: boolean
+        default: false
+permissions:
+  contents: write
+concurrency:
+  group: newsbot-cleanup
+  cancel-in-progress: false
+jobs:
+  engine:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          token: ${{ secrets.WORKFLOW_PAT }}
+      - name: Remove obsolete engine files
+        run: python3 scripts/cleanup_repo.py engine .
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then echo "engine already clean"; exit 0; fi
+          git commit -q -m "cleanup: remove files left by older versions"
+          git push || { echo "push refused (a workflow file needs WORKFLOW_PAT): removing workflow files from this commit"; \
+            git reset -q --soft HEAD~1; git reset -q .github/workflows; git commit -q -m "cleanup: remove files left by older versions (without workflow files)" || exit 0; git push; \
+            echo "::warning::delete .github/workflows/setup-approve.yml by hand (add the WORKFLOW_PAT secret to do it here)"; }
+  brain:
+    if: ${{ inputs.clean_brain }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          repository: ${{ vars.BRAIN_REPO }}
+          token: ${{ secrets.BRAIN_REPO_TOKEN }}
+          path: brain
+      - name: Close old Review PRs and delete review/* branches (best effort)
+        env:
+          GH_TOKEN: ${{ secrets.BRAIN_REPO_TOKEN }}
+          BRAIN: ${{ vars.BRAIN_REPO }}
+        run: |
+          for n in $(gh pr list -R "$BRAIN" --state open --limit 200 --json number,headRefName -q '.[] | select(.headRefName | startswith("review/")) | .number'); do
+            gh pr close "$n" -R "$BRAIN" -d >/dev/null 2>&1 && echo "closed PR #$n" || echo "could not close PR #$n"
+          done
+          for b in $(git -C brain ls-remote --heads origin 'review/*' | sed 's#.*refs/heads/##'); do
+            git -C brain push -q origin --delete "$b" && echo "deleted branch $b" || echo "could not delete $b"
+          done
+      - name: Old pending drafts
+        env:
+          DELETE_PENDING: ${{ inputs.delete_pending }}
+        run: |
+          if [ "$DELETE_PENDING" = "true" ]; then python3 scripts/cleanup_repo.py brain brain --delete-pending; else python3 scripts/cleanup_repo.py brain brain; fi
+      - name: Commit
+        working-directory: brain
+        run: |
+          git config user.name "newsbot"
+          git config user.email "newsbot@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then echo "brain: nothing to commit"; exit 0; fi
+          git commit -q -m "cleanup: remove old pending drafts"
+          git push -q origin HEAD:main

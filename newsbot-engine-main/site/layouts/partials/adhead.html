@@ -1,0 +1,10 @@
+{{- $d := site.Data.site -}}
+{{- if and (partial "adson.html" .) (not $d.ads.consent_required) }}
+{{- if eq $d.ads.network "adsterra" }}
+{{- range $d.ads.scripts }}
+<script async src="{{ . }}"></script>
+{{- end }}
+{{- else }}
+<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-{{ $d.ads.publisher_id }}" crossorigin="anonymous"></script>
+{{- end }}
+{{- end }}

@@ -1,0 +1,3 @@
+v25 — more false name flags cleared (compass/region words, spelled-out numbers, common acronyms, figures the fact sheet lists in a claim); translation fidelity retry. Upload out/translate.md to the brain prompts/ for more natural translations.
+v24 — a translation refused only for a fidelity slip (added number, untranslated sentence, wrong marker) is asked once more with the reason named.
+v23: updates are written in English and translated (not 5 separate writes); translation max_tokens x1.5 (Spanish cut-off); bare dates no longer count as untranslated.

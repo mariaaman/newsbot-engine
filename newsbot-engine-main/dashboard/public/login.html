@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="bn">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f766e">
+  <meta name="robots" content="noindex, nofollow">
+  <title>NewsBot Control</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="login-page">
+  <main class="login-box">
+    <h1>NewsBot Control</h1>
+    <p class="muted">নিউজবট নিয়ন্ত্রণ-কক্ষ। চালিয়ে যেতে লগইন করুন।</p>
+    <form id="login-form" autocomplete="off">
+      <label class="lbl" for="pw">পাসওয়ার্ড</label>
+      <input id="pw" name="password" type="password" autocomplete="current-password" required>
+      <div id="code-row" hidden>
+        <label class="lbl" for="code">২-ধাপ কোড (৬ সংখ্যা)</label>
+        <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6">
+      </div>
+      <button id="go" class="btn primary wide" type="submit">লগইন</button>
+      <p id="msg" class="msg" role="alert" hidden></p>
+    </form>
+  </main>
+  <script src="/login.js"></script>
+</body>
+</html>

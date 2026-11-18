@@ -1,0 +1,6 @@
+<footer class="site-footer"><div class="wrap">
+<nav aria-label="{{ i18n "policies" }}">
+{{- range sort (where site.RegularPages "Type" "policy") "Weight" }}<a href="{{ .RelPermalink }}">{{ .Title }}</a>{{ end -}}
+</nav>
+<p>&copy; {{ now.Year }} {{ site.Data.site.name }}. {{ i18n "footer_note" }}</p>
+</div></footer>

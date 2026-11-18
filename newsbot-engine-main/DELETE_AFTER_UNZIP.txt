@@ -1,0 +1,10 @@
+Unzip does not delete old files. After unzipping v22 at the root of newsbot-engine, delete these (GitHub web: open file, trash icon):
+worker/                                   (whole folder)
+.github/workflows/setup-approve.yml
+scripts/setup_approve_worker.py
+scripts/pending_triage.py
+docs/TELEGRAM_APPROVE.md
+tests/test_approve_buttons.py
+tests/test_setup_approve.py
+tests/test_pending_triage.py
+brain repo (optional): the old pending/ folder (about 55 unpublished drafts), if you do not want them.

@@ -1,0 +1,1 @@
+# ads.txt: ads are disabled (ads.enabled=false in the brain config).

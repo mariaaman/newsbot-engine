@@ -1,0 +1,4 @@
+{{ define "main" }}
+<div class="wrap"><h1>{{ i18n "categories" }}</h1>
+<p class="chips">{{ range .Data.Terms.Alphabetical }}<a href="{{ .Page.RelPermalink }}">{{ partial "catname.html" .Name }} <small>{{ .Count }}</small></a>{{ end }}</p></div>
+{{ end }}

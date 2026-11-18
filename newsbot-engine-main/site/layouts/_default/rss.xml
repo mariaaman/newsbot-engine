@@ -1,0 +1,22 @@
+{{- $pages := cond .IsHome site.RegularPages .Pages -}}
+{{- $pages = (where $pages "Type" "page").ByDate.Reverse -}}
+{{- printf `<?xml version="1.0" encoding="utf-8"?>` | safeHTML }}
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+<channel>
+<title>{{ if .IsHome }}{{ site.Data.site.name | html }}{{ else }}{{ .Title | html }} | {{ site.Data.site.name | html }}{{ end }}</title>
+<link>{{ .Permalink }}</link>
+<language>{{ site.Language.LanguageCode }}</language>
+{{- with .OutputFormats.Get "RSS" }}
+{{ printf `<atom:link href="%s" rel="self" type="application/rss+xml" />` .Permalink | safeHTML }}
+{{- end }}
+{{- range first 20 $pages }}
+<item>
+<title>{{ .Title | html }}</title>
+<link>{{ .Permalink }}</link>
+<pubDate>{{ .Date.Format "Mon, 02 Jan 2006 15:04:05 -0700" | safeHTML }}</pubDate>
+<guid isPermaLink="true">{{ .Permalink }}</guid>
+<description>{{ .Params.summary | html }}</description>
+</item>
+{{- end }}
+</channel>
+</rss>
